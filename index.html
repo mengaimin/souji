@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>会社掃除当番システム</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+    }
+    header {
+      background: linear-gradient(135deg, #0f766e, #14b8a6);
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; }
+    .nav-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .nav-btn:hover, .nav-btn.active { background: rgba(255,255,255,0.3); }
+    main { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .card h2 { margin: 0 0 14px; font-size: 16px; color: #0f766e; }
+    .task-grid { display: grid; gap: 10px; }
+    .task-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: #f8fafc;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+    }
+    .task-row.trash { border-left: 4px solid #f59e0b; background: #fffbeb; }
+    .task-emoji { font-size: 22px; width: 32px; text-align: center; }
+    .task-label { font-size: 14px; font-weight: 600; min-width: 100px; }
+    .task-name { font-size: 15px; font-weight: 700; color: #0f766e; flex: 1; }
+    .highlight-box {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 14px;
+      font-size: 14px;
+      line-height: 1.8;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; }
+    th { background: #f8fafc; color: #64748b; font-weight: 600; font-size: 11px; }
+    .btn {
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-primary { background: #0f766e; color: #fff; }
+    .btn-primary:hover { background: #0d9488; }
+    .btn-secondary { background: #e2e8f0; color: #334155; }
+    .btn-danger { background: #fee2e2; color: #991b1b; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    input, select {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      width: 100%;
+    }
+    label { font-size: 12px; color: #64748b; display: block; margin-bottom: 4px; }
+    .form-row { margin-bottom: 12px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+    .staff-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      margin-bottom: 8px;
+    }
+    .staff-order {
+      width: 32px; height: 32px;
+      background: #0f766e; color: #fff;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 13px; flex-shrink: 0;
+    }
+    .staff-name { flex: 1; font-weight: 600; }
+    .empty { text-align: center; color: #94a3b8; padding: 24px; }
+    #modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45); z-index: 100;
+      padding: 40px 16px; overflow-y: auto;
+    }
+    #modal-box {
+      background: #fff; border-radius: 14px;
+      max-width: 480px; margin: 0 auto; padding: 20px;
+    }
+    .toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: #16a34a; color: #fff;
+      padding: 12px 18px; border-radius: 10px;
+      font-size: 13px; z-index: 200;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .login-bar { font-size: 12px; opacity: 0.9; }
+    .week-day { font-size: 11px; color: #64748b; }
+    .preview-msg {
+      background: #1e293b; color: #e2e8f0;
+      border-radius: 10px; padding: 14px;
+      font-size: 13px; white-space: pre-wrap;
+      line-height: 1.7;
+      font-family: monospace;
+    }
+    .rule-list { font-size: 13px; color: #475569; line-height: 1.8; padding-left: 18px; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>🧹 会社掃除当番</h1>
+    <nav>
+      <button class="nav-btn active" data-page="home">今日の当番</button>
+      <button class="nav-btn" data-page="week">週間</button>
+      <button class="nav-btn" data-page="staff">社員・順番</button>
+      <button class="nav-btn" data-page="settings">設定</button>
+    </nav>
+    <div class="login-bar" id="login-bar">
+      <button class="nav-btn" id="btn-login">🔐 管理者ログイン</button>
+    </div>
+  </header>
+  <main id="content"></main>
+  <div id="modal-overlay">
+    <div id="modal-box">
+      <h3 id="modal-title" style="margin:0 0 14px;font-size:16px"></h3>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    // ★ Supabase の URL / anon key を設定（期間管理と同じプロジェクトでも可）
+    const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
+    const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+
+    const { createClient } = window.supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const TASKS = [
+      { key: 'trash', label: 'ゴミ捨て', emoji: '🗑️' },
+      { key: 'toilet', label: 'トイレ', emoji: '🚽' },
+      { key: 'floor', label: 'フロア', emoji: '🧹' },
+      { key: 'air', label: '空気清浄機', emoji: '💨' },
+      { key: 'kitchen', label: '給湯室', emoji: '☕' },
+    ];
+
+    let state = { staff: [], settings: null, page: 'home', adminPw: sessionStorage.getItem('cleaning_admin') || '' };
+
+    function jstToday() {
+      return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
+    }
+    function addDays(dateStr, n) {
+      const d = new Date(dateStr + 'T12:00:00');
+      d.setDate(d.getDate() + n);
+      return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
+    }
+    function fmtDateJa(dateStr) {
+      const [y, m, d] = dateStr.split('-');
+      return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+    }
+    function daysBetween(anchor, target) {
+      const a = new Date(anchor + 'T12:00:00');
+      const t = new Date(target + 'T12:00:00');
+      return Math.round((t - a) / 86400000);
+    }
+    function assigneeIndex(dayOffset, taskIndex, staffCount) {
+      if (staffCount <= 0) return -1;
+      return ((dayOffset - taskIndex) % staffCount + staffCount) % staffCount;
+    }
+    function calcSchedule(staff, anchorDate, targetDate) {
+      const active = staff.filter(s => s.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+      const N = active.length;
+      const D = daysBetween(anchorDate, targetDate);
+      const assignments = TASKS.map((task, t) => {
+        const idx = assigneeIndex(D, t, N);
+        const person = idx >= 0 ? active[idx] : null;
+        return { ...task, taskIndex: t, staff: person, sortOrder: idx };
+      });
+      const trashToday = assignments[0]?.staff || null;
+      const trashTomorrowIdx = assigneeIndex(D + 1, 0, N);
+      const trashTomorrow = trashTomorrowIdx >= 0 ? active[trashTomorrowIdx] : null;
+      return { date: targetDate, dayOffset: D, staffCount: N, assignments, trashToday, trashTomorrow };
+    }
+    function buildSlackMessage(sched, tomorrowSched) {
+      const lines = sched.assignments.map(a => `${a.emoji} ${a.label}: ${a.staff?.name || '—'}`).join('\n');
+      return `【掃除当番】${sched.date.replace(/-/g, '/')}\n\n`
+        + `■ 今日の五つの掃除担当\n${lines}\n\n`
+        + `■ 今日のゴミ捨て担当: ${sched.trashToday?.name || '—'}\n`
+        + `■ 明日のゴミ回収: ${sched.trashTomorrow?.name || '—'}\n\n`
+        + `よろしくお願いいたします。`;
+    }
+
+    function toast(msg, type = 'success') {
+      const t = document.createElement('div');
+      t.className = 'toast';
+      t.style.background = type === 'error' ? '#dc2626' : '#16a34a';
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+    function errMsg(e) { return e?.message || String(e); }
+    function isAdmin() { return !!state.adminPw; }
+    function openModal(title, html) {
+      document.getElementById('modal-title').textContent = title;
+      document.getElementById('modal-body').innerHTML = html;
+      document.getElementById('modal-overlay').style.display = 'block';
+    }
+    function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+
+    async function loadData() {
+      const [{ data: staff, error: e1 }, { data: settingsRows, error: e2 }] = await Promise.all([
+        db.rpc('cleaning_list_staff'),
+        db.rpc('cleaning_get_settings'),
+      ]);
+      if (e1) throw e1;
+      if (e2) throw e2;
+      state.staff = staff || [];
+      state.settings = settingsRows?.[0] || { rotation_start_date: jstToday() };
+    }
+
+    function getAnchor() { return state.settings?.rotation_start_date || jstToday(); }
+
+    function renderHome() {
+      const today = jstToday();
+      const sched = calcSchedule(state.staff, getAnchor(), today);
+      if (!sched.staffCount) {
+        return `<div class="card"><p class="empty">社員が登録されていません。<br>「社員・順番」から登録してください。</p></div>`;
+      }
+      const rows = sched.assignments.map(a => `
+        <div class="task-row${a.key === 'trash' ? ' trash' : ''}">
+          <div class="task-emoji">${a.emoji}</div>
+          <div class="task-label">${a.label}</div>
+          <div class="task-name">${a.staff?.name || '—'}</div>
+        </div>`).join('');
+      const preview = buildSlackMessage(sched);
+      return `
+        <div class="card">
+          <h2>📅 今日の当番（${fmtDateJa(today)}）</h2>
+          <div class="task-grid">${rows}</div>
+          <div class="highlight-box">
+            <strong>🗑️ 今日のゴミ捨て:</strong> ${sched.trashToday?.name || '—'}<br>
+            <strong>🗑️ 明日のゴミ回収:</strong> ${sched.trashTomorrow?.name || '—'}
+          </div>
+        </div>
+        <div class="card">
+          <h2>💬 Slack 通知プレビュー</h2>
+          <div class="preview-msg">${preview.replace(/</g, '&lt;')}</div>
+        </div>
+        <div class="card">
+          <h2>📋 ローテーションのルール</h2>
+          <ul class="rule-list">
+            <li>社員を登録し、<strong>当番順（1番・2番…）</strong>を決めます</li>
+            <li><strong>ゴミ捨て</strong>は順番どおり毎日ローテーション（1番→2番→3番→…→1番）</li>
+            <li>今日ゴミ捨ての人は、<strong>明日トイレ → 明後日フロア → 空気清浄機 → 給湯室</strong>と進みます</li>
+            <li>毎朝 Slack に今日の5担当とゴミ捨て情報を通知します</li>
+          </ul>
+        </div>`;
+    }
+
+    function renderWeek() {
+      const today = jstToday();
+      let html = `<div class="card"><h2>📆 7日間の当番表</h2><table>
+        <thead><tr><th>日付</th>${TASKS.map(t => `<th>${t.emoji} ${t.label}</th>`).join('')}<th>🗑️翌日</th></tr></thead><tbody>`;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(today, i);
+        const s = calcSchedule(state.staff, getAnchor(), d);
+        const label = i === 0 ? `<strong>今日</strong><br><span class="week-day">${fmtDateJa(d)}</span>`
+          : `<span class="week-day">${fmtDateJa(d)}</span>`;
+        if (!s.staffCount) {
+          html += `<tr><td>${label}</td><td colspan="6" class="empty">社員未登録</td></tr>`;
+          continue;
+        }
+        html += `<tr><td>${label}</td>`
+          + s.assignments.map(a => `<td>${a.staff?.name || '—'}</td>`).join('')
+          + `<td style="color:#b45309;font-weight:600">${s.trashTomorrow?.name || '—'}</td></tr>`;
+      }
+      html += '</tbody></table></div>';
+      return html;
+    }
+
+    function renderStaff() {
+      const sorted = [...state.staff].sort((a, b) => a.sort_order - b.sort_order);
+      const items = sorted.map((s, i) => `
+        <div class="staff-item" data-id="${s.id}">
+          <div class="staff-order">${i + 1}</div>
+          <div class="staff-name">${s.name}</div>
+          ${isAdmin() ? `
+            <button class="btn btn-secondary btn-sm" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="btn btn-secondary btn-sm" data-action="down" data-id="${s.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="btn btn-danger btn-sm" data-action="del" data-id="${s.id}">削除</button>
+          ` : ''}
+        </div>`).join('');
+      return `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <h2 style="margin:0">👥 社員と当番順</h2>
+            ${isAdmin() ? '<button class="btn btn-primary" id="btn-add-staff">＋ 社員追加</button>' : ''}
+          </div>
+          ${items || '<p class="empty">社員がいません</p>'}
+          ${!isAdmin() ? '<p style="font-size:12px;color:#94a3b8;margin-top:12px">編集するには管理者ログインが必要です</p>' : ''}
+        </div>`;
+    }
+
+    function renderSettings() {
+      if (!isAdmin()) return `<div class="card"><p class="empty">設定を変更するには管理者ログインしてください</p></div>`;
+      const s = state.settings || {};
+      return `
+        <div class="card">
+          <h2>⚙️ 基本設定</h2>
+          <form id="settings-form">
+            <div class="form-row">
+              <label>ローテーション起点日（この日に1番がゴミ捨て）</label>
+              <input type="date" name="rotation_start_date" value="${s.rotation_start_date || jstToday()}" required>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin:0 0 14px">起点日を変えると当番表が再計算されます。運用開始日に合わせてください。</p>
+            <button type="submit" class="btn btn-primary">保存</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>💬 Slack 通知</h2>
+          <form id="slack-form">
+            <div class="form-row">
+              <label><input type="checkbox" name="slack_enabled" ${s.slack_enabled ? 'checked' : ''}> Slack 通知を有効化</label>
+            </div>
+            <div class="form-row">
+              <label><input type="checkbox" name="cron_enabled" ${s.cron_enabled !== false ? 'checked' : ''}> 毎日の自動送信を有効化</label>
+            </div>
+            <div class="form-grid">
+              <div class="form-row">
+                <label>通知時刻（JST）</label>
+                <select name="cron_hour_jst">${Array.from({ length: 24 }, (_, h) =>
+        `<option value="${h}"${(s.cron_hour_jst ?? 9) === h ? ' selected' : ''}>${h}:00</option>`).join('')}</select>
+              </div>
+              <div class="form-row">
+                <label>Webhook URL${s.slack_webhook_masked ? `（登録済: ${s.slack_webhook_masked}）` : ''}</label>
+                <input type="url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+              <button type="submit" class="btn btn-primary">Slack 設定を保存</button>
+              <button type="button" class="btn btn-secondary" id="btn-test-slack">テスト送信</button>
+            </div>
+            ${s.last_cron_run_at ? `<p style="font-size:11px;color:#94a3b8;margin-top:10px">最終自動送信: ${new Date(s.last_cron_run_at).toLocaleString('ja-JP')}</p>` : ''}
+          </form>
+        </div>
+        <div class="card">
+          <h2>🔐 パスワード変更</h2>
+          <form id="pw-form">
+            <div class="form-row"><label>現在のパスワード</label><input type="password" name="current" required></div>
+            <div class="form-row"><label>新しいパスワード（8文字以上）</label><input type="password" name="newpw" required minlength="8"></div>
+            <button type="submit" class="btn btn-primary">変更</button>
+          </form>
+        </div>`;
+    }
+
+    function render() {
+      document.querySelectorAll('.nav-btn[data-page]').forEach(b => {
+        b.classList.toggle('active', b.dataset.page === state.page);
+      });
+      const el = document.getElementById('content');
+      if (state.page === 'home') el.innerHTML = renderHome();
+      else if (state.page === 'week') el.innerHTML = renderWeek();
+      else if (state.page === 'staff') el.innerHTML = renderStaff();
+      else if (state.page === 'settings') el.innerHTML = renderSettings();
+      updateLoginBar();
+    }
+
+    function updateLoginBar() {
+      const bar = document.getElementById('login-bar');
+      if (isAdmin()) {
+        bar.innerHTML = `<span>管理者ログイン中</span> <button class="nav-btn" id="btn-logout">ログアウト</button>`;
+      } else {
+        bar.innerHTML = `<button class="nav-btn" id="btn-login">🔐 管理者ログイン</button>`;
+      }
+    }
+
+    function showLoginModal() {
+      openModal('管理者ログイン', `
+        <form id="login-form">
+          <div class="form-row"><label>パスワード</label><input type="password" name="password" required autofocus></div>
+          <p style="font-size:11px;color:#94a3b8">初期: Admin1234（初回ログイン後に変更推奨）</p>
+          <div style="display:flex;gap:8px;margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+            <button type="submit" class="btn btn-primary">ログイン</button>
+          </div>
+        </form>`);
+      document.getElementById('login-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const pw = new FormData(e.target).get('password');
+        const { data, error } = await db.rpc('cleaning_check_password', { p_password: pw });
+        if (error || !data) { toast('パスワードが正しくありません', 'error'); return; }
+        state.adminPw = pw;
+        sessionStorage.setItem('cleaning_admin', pw);
+        closeModal();
+        toast('ログインしました');
+        render();
+      };
+    }
+
+    async function refresh() {
+      try {
+        await loadData();
+        render();
+      } catch (e) {
+        document.getElementById('content').innerHTML = `<div class="card"><p style="color:#dc2626">読み込みエラー: ${errMsg(e)}<br><small>souji.sql を Supabase で実行し、URL/Key を設定してください</small></p></div>`;
+      }
+    }
+
+    document.addEventListener('click', async (e) => {
+      const page = e.target.closest('[data-page]')?.dataset?.page;
+      if (page) { state.page = page; render(); return; }
+
+      if (e.target.id === 'btn-login') { showLoginModal(); return; }
+      if (e.target.id === 'btn-logout') {
+        state.adminPw = '';
+        sessionStorage.removeItem('cleaning_admin');
+        toast('ログアウトしました');
+        render();
+        return;
+      }
+      if (e.target.id === 'btn-add-staff') {
+        openModal('社員追加', `
+          <form id="add-staff-form">
+            <div class="form-row"><label>名前</label><input name="name" required placeholder="例: 田中太郎"></div>
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+              <button type="submit" class="btn btn-primary">追加</button>
+            </div>
+          </form>`);
+        document.getElementById('add-staff-form').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const name = new FormData(ev.target).get('name');
+          const { error } = await db.rpc('cleaning_add_staff', { p_password: state.adminPw, p_name: name });
+          if (error) { toast(errMsg(error), 'error'); return; }
+          closeModal(); toast('追加しました'); await refresh();
+        };
+        return;
+      }
+
+      const action = e.target.dataset.action;
+      const id = e.target.dataset.id;
+      if (action === 'del' && id) {
+        if (!confirm('この社員を削除しますか？')) return;
+        const { error } = await db.rpc('cleaning_delete_staff', { p_password: state.adminPw, p_id: id });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('削除しました'); await refresh();
+        return;
+      }
+      if ((action === 'up' || action === 'down') && id) {
+        const sorted = [...state.staff].sort((a, b) => a.sort_order - b.sort_order);
+        const idx = sorted.findIndex(s => s.id === id);
+        if (idx < 0) return;
+        const newIdx = action === 'up' ? idx - 1 : idx + 1;
+        if (newIdx < 0 || newIdx >= sorted.length) return;
+        [sorted[idx], sorted[newIdx]] = [sorted[newIdx], sorted[idx]];
+        const { error } = await db.rpc('cleaning_reorder_staff', {
+          p_password: state.adminPw,
+          p_ids: sorted.map(s => s.id),
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        await refresh();
+      }
+
+      if (e.target.id === 'btn-test-slack') {
+        const { data, error } = await db.rpc('cleaning_test_slack', { p_password: state.adminPw });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        if (!data?.ok) { toast(data?.error || '送信失敗', 'error'); return; }
+        toast('Slack にテスト送信しました');
+      }
+    });
+
+    document.addEventListener('submit', async (e) => {
+      if (e.target.id === 'settings-form') {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const { error } = await db.rpc('cleaning_save_settings', {
+          p_password: state.adminPw,
+          p_rotation_start_date: fd.get('rotation_start_date'),
+          p_slack_enabled: null,
+          p_slack_webhook_url: null,
+          p_cron_hour_jst: null,
+          p_cron_enabled: null,
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('保存しました'); await refresh();
+      }
+      if (e.target.id === 'slack-form') {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const { error } = await db.rpc('cleaning_save_settings', {
+          p_password: state.adminPw,
+          p_rotation_start_date: null,
+          p_slack_enabled: fd.get('slack_enabled') === 'on',
+          p_slack_webhook_url: fd.get('slack_webhook_url') || null,
+          p_cron_hour_jst: parseInt(fd.get('cron_hour_jst'), 10),
+          p_cron_enabled: fd.get('cron_enabled') === 'on',
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('Slack 設定を保存しました'); await refresh();
+      }
+      if (e.target.id === 'pw-form') {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const { error } = await db.rpc('cleaning_change_password', {
+          p_current_password: fd.get('current'),
+          p_new_password: fd.get('newpw'),
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        state.adminPw = fd.get('newpw');
+        sessionStorage.setItem('cleaning_admin', state.adminPw);
+        toast('パスワードを変更しました');
+        e.target.reset();
+      }
+    });
+
+    document.getElementById('modal-overlay').addEventListener('click', (e) => {
+      if (e.target.id === 'modal-overlay') closeModal();
+    });
+
+    refresh();
+  </script>
+</body>
+
+</html>
