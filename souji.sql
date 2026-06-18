@@ -12,6 +12,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 CREATE TABLE cleaning_staff (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name          text NOT NULL,
+  mention_name  text,
+  slack_user_id text,
   sort_order    int NOT NULL DEFAULT 0,
   is_active     boolean NOT NULL DEFAULT true,
   created_at    timestamptz NOT NULL DEFAULT now()
@@ -21,6 +23,8 @@ CREATE INDEX cleaning_staff_order_idx ON cleaning_staff (sort_order, created_at)
 
 COMMENT ON TABLE cleaning_staff IS '掃除当番社員（sort_order が当番順・1番から）';
 COMMENT ON COLUMN cleaning_staff.sort_order IS '当番順（0始まり。0=1番）';
+COMMENT ON COLUMN cleaning_staff.mention_name IS 'Slack @用の表示名（未設定時は name を使用。例: 小笠原 将太）';
+COMMENT ON COLUMN cleaning_staff.slack_user_id IS 'Slack メンバーID（U...）。設定すると通知でメンション色付き表示';
 
 -- ============================================================
 --  設定
@@ -71,6 +75,17 @@ LANGUAGE sql IMMUTABLE AS $$
   END;
 $$;
 
+-- Slack 通知用: メンバーID があれば <@U...>（色付きメンション）、なければ太字
+CREATE OR REPLACE FUNCTION cleaning_slack_highlight(p_name text, p_slack_user_id text DEFAULT NULL)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN p_slack_user_id IS NOT NULL AND trim(p_slack_user_id) <> '' THEN
+      '<@' || trim(p_slack_user_id) || '>'
+    ELSE '*' || p_name || '*'
+  END;
+$$;
+
 -- ============================================================
 --  指定日の当番表（JSON）
 -- ============================================================
@@ -91,7 +106,10 @@ DECLARE
   v_name text;
 BEGIN
   SELECT coalesce(jsonb_agg(jsonb_build_object(
-    'id', s.id, 'name', s.name, 'sort_order', s.sort_order
+    'id', s.id, 'name', s.name,
+    'mention_name', coalesce(s.mention_name, s.name),
+    'slack_user_id', s.slack_user_id,
+    'sort_order', s.sort_order
   ) ORDER BY s.sort_order, s.created_at), '[]'::jsonb)
   INTO v_staff
   FROM cleaning_staff s
@@ -120,6 +138,8 @@ BEGIN
       'emoji', v_emojis[v_i + 1],
       'staff_id', v_staff->v_idx->>'id',
       'staff_name', v_name,
+      'staff_mention', coalesce(v_staff->v_idx->>'mention_name', v_name),
+      'staff_slack_user_id', v_staff->v_idx->>'slack_user_id',
       'sort_order', v_idx
     ));
   END LOOP;
@@ -134,11 +154,15 @@ BEGIN
     'trash_today', jsonb_build_object(
       'staff_id', v_staff->v_idx->>'id',
       'staff_name', v_staff->v_idx->>'name',
+      'staff_mention', coalesce(v_staff->v_idx->>'mention_name', v_staff->v_idx->>'name'),
+      'staff_slack_user_id', v_staff->v_idx->>'slack_user_id',
       'sort_order', v_idx
     ),
     'trash_tomorrow', jsonb_build_object(
       'staff_id', v_staff->v_idx_tomorrow->>'id',
       'staff_name', v_staff->v_idx_tomorrow->>'name',
+      'staff_mention', coalesce(v_staff->v_idx_tomorrow->>'mention_name', v_staff->v_idx_tomorrow->>'name'),
+      'staff_slack_user_id', v_staff->v_idx_tomorrow->>'slack_user_id',
       'sort_order', v_idx_tomorrow
     )
   );
@@ -176,12 +200,13 @@ $$;
 -- ============================================================
 --  RPC: 社員一覧
 -- ============================================================
+DROP FUNCTION IF EXISTS cleaning_list_staff();
 CREATE OR REPLACE FUNCTION cleaning_list_staff()
-RETURNS TABLE(id uuid, name text, sort_order int, is_active boolean)
+RETURNS TABLE(id uuid, name text, mention_name text, slack_user_id text, sort_order int, is_active boolean)
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT s.id, s.name, s.sort_order, s.is_active
+  SELECT s.id, s.name, s.mention_name, s.slack_user_id, s.sort_order, s.is_active
   FROM cleaning_staff s
   ORDER BY s.sort_order, s.created_at;
 $$;
@@ -189,7 +214,14 @@ $$;
 -- ============================================================
 --  RPC: 社員追加
 -- ============================================================
-CREATE OR REPLACE FUNCTION cleaning_add_staff(p_password text, p_name text)
+DROP FUNCTION IF EXISTS cleaning_add_staff(text, text, text);
+DROP FUNCTION IF EXISTS cleaning_add_staff(text, text, text, text);
+CREATE OR REPLACE FUNCTION cleaning_add_staff(
+  p_password text,
+  p_name text,
+  p_mention_name text DEFAULT NULL,
+  p_slack_user_id text DEFAULT NULL
+)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public
@@ -205,8 +237,13 @@ BEGIN
     RAISE EXCEPTION '名前を入力してください';
   END IF;
   SELECT coalesce(max(sort_order), -1) + 1 INTO v_max FROM cleaning_staff;
-  INSERT INTO cleaning_staff (name, sort_order)
-  VALUES (trim(p_name), v_max)
+  INSERT INTO cleaning_staff (name, mention_name, slack_user_id, sort_order)
+  VALUES (
+    trim(p_name),
+    NULLIF(trim(coalesce(p_mention_name, '')), ''),
+    NULLIF(trim(coalesce(p_slack_user_id, '')), ''),
+    v_max
+  )
   RETURNING cleaning_staff.id INTO v_id;
   RETURN v_id;
 END;
@@ -233,6 +270,40 @@ BEGIN
   UPDATE cleaning_staff s SET sort_order = r.new_order
   FROM ranked r WHERE s.id = r.id;
   RETURN FOUND;
+END;
+$$;
+
+-- ============================================================
+--  RPC: 社員編集
+-- ============================================================
+DROP FUNCTION IF EXISTS cleaning_update_staff(text, uuid, text, text);
+CREATE OR REPLACE FUNCTION cleaning_update_staff(
+  p_password text,
+  p_id uuid,
+  p_name text,
+  p_mention_name text DEFAULT NULL,
+  p_slack_user_id text DEFAULT NULL
+)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT cleaning_verify_admin(p_password) THEN
+    RAISE EXCEPTION 'パスワードが正しくありません';
+  END IF;
+  IF trim(p_name) = '' THEN
+    RAISE EXCEPTION '名前を入力してください';
+  END IF;
+  UPDATE cleaning_staff SET
+    name = trim(p_name),
+    mention_name = NULLIF(trim(coalesce(p_mention_name, '')), ''),
+    slack_user_id = NULLIF(trim(coalesce(p_slack_user_id, '')), '')
+  WHERE id = p_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '社員が見つかりません';
+  END IF;
+  RETURN true;
 END;
 $$;
 
@@ -362,23 +433,29 @@ DECLARE
 BEGIN
   v_sched := cleaning_schedule_for_date(p_date);
   IF (v_sched->>'staff_count')::int = 0 THEN
-    RETURN '【掃除当番】社員が登録されていません。';
+    RETURN '【本日掃除当番】社員が登録されていません。';
   END IF;
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(v_sched->'assignments')
   LOOP
-    v_lines := v_lines || E'\n' || (v_item->>'emoji') || ' ' || (v_item->>'task')
-      || ': ' || (v_item->>'staff_name');
+    v_lines := v_lines || E'\n'
+      || cleaning_slack_highlight(v_item->>'staff_name', v_item->>'staff_slack_user_id')
+      || 'さん  → 「' || (v_item->>'task') || '」';
   END LOOP;
 
-  v_trash_today := v_sched->'trash_today'->>'staff_name';
-  v_trash_tomorrow := v_sched->'trash_tomorrow'->>'staff_name';
+  v_trash_today := cleaning_slack_highlight(
+    v_sched->'trash_today'->>'staff_name',
+    v_sched->'trash_today'->>'staff_slack_user_id'
+  );
+  v_trash_tomorrow := cleaning_slack_highlight(
+    v_sched->'trash_tomorrow'->>'staff_name',
+    v_sched->'trash_tomorrow'->>'staff_slack_user_id'
+  );
 
-  RETURN '【掃除当番】' || to_char(p_date, 'YYYY/MM/DD') || E'\n\n'
-    || '■ 今日の五つの掃除担当' || v_lines || E'\n\n'
-    || '■ 今日のゴミ捨て担当: ' || v_trash_today || E'\n'
-    || '■ 明日のゴミ回収: ' || v_trash_tomorrow || E'\n\n'
-    || 'よろしくお願いいたします。';
+  RETURN '【本日掃除当番】' || v_lines || E'\n\n'
+    || '本日のゴミ捨て担当は' || v_trash_today || 'さんです。' || E'\n'
+    || '明日朝のゴミ箱回収担当は' || v_trash_tomorrow || 'さんです。' || E'\n'
+    || 'よろしくおねがいいたします。';
 END;
 $$;
 
@@ -412,7 +489,12 @@ BEGIN
     'POST', v_url,
     ARRAY[extensions.http_header('Content-Type', 'application/json')],
     'application/json',
-    jsonb_build_object('text', v_msg)::text
+    jsonb_build_object(
+      'blocks', jsonb_build_array(jsonb_build_object(
+        'type', 'section',
+        'text', jsonb_build_object('type', 'mrkdwn', 'text', v_msg)
+      ))
+    )::text
   )::extensions.http_request);
 
   IF v_resp.status BETWEEN 200 AND 299 THEN
@@ -452,7 +534,9 @@ GRANT EXECUTE ON FUNCTION cleaning_schedule_for_date(date) TO anon, authenticate
 GRANT EXECUTE ON FUNCTION cleaning_build_slack_message(date) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_check_password(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_list_staff() TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION cleaning_add_staff(text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_slack_highlight(text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_add_staff(text, text, text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_update_staff(text, uuid, text, text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_delete_staff(text, uuid) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_reorder_staff(text, uuid[]) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_get_settings() TO anon, authenticated;

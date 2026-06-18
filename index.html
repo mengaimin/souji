@@ -137,10 +137,10 @@
     .preview-msg {
       background: #1e293b; color: #e2e8f0;
       border-radius: 10px; padding: 14px;
-      font-size: 13px; white-space: pre-wrap;
-      line-height: 1.7;
-      font-family: monospace;
+      font-size: 13px; line-height: 1.7;
     }
+    .preview-msg .name-highlight { color: #5eead4; font-weight: 700; }
+    .preview-msg .name-mention { background: rgba(94, 234, 212, 0.2); padding: 0 4px; border-radius: 4px; }
     .rule-list { font-size: 13px; color: #475569; line-height: 1.8; padding-left: 18px; }
   </style>
 </head>
@@ -168,8 +168,9 @@
 
   <script>
     // ★ Supabase の URL / anon key を設定（期間管理と同じプロジェクトでも可）
-    const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
-    const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+    // URL = Dashboard「Project URL」 / Key = 公開可能な鍵（sb_publishable_...）または anon key
+    const SUPABASE_URL = 'https://zffoaelhfskphgihbsll.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmZm9hZWxoZnNrcGhnaWhic2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxODk2MjMsImV4cCI6MjA5MTc2NTYyM30.VbH19CiSqOgRwS8jLCP9gZjphq8RWj72hKCWMaP4NJ4';
 
     const { createClient } = window.supabase;
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -219,13 +220,21 @@
       const trashTomorrow = trashTomorrowIdx >= 0 ? active[trashTomorrowIdx] : null;
       return { date: targetDate, dayOffset: D, staffCount: N, assignments, trashToday, trashTomorrow };
     }
-    function buildSlackMessage(sched, tomorrowSched) {
-      const lines = sched.assignments.map(a => `${a.emoji} ${a.label}: ${a.staff?.name || '—'}`).join('\n');
-      return `【掃除当番】${sched.date.replace(/-/g, '/')}\n\n`
-        + `■ 今日の五つの掃除担当\n${lines}\n\n`
-        + `■ 今日のゴミ捨て担当: ${sched.trashToday?.name || '—'}\n`
-        + `■ 明日のゴミ回収: ${sched.trashTomorrow?.name || '—'}\n\n`
-        + `よろしくお願いいたします。`;
+    function buildSlackPreviewHtml(sched) {
+      const hl = (staff) => {
+        const n = staff?.name || '—';
+        if (staff?.slack_user_id) {
+          return `<span class="name-highlight name-mention">@${escHtml(n)}</span>`;
+        }
+        return `<span class="name-highlight">${escHtml(n)}</span>`;
+      };
+      const lines = sched.assignments.map(a =>
+        `${hl(a.staff)}さん  → 「${escHtml(a.label)}」`
+      ).join('<br>');
+      return `【本日掃除当番】<br>${lines}<br><br>`
+        + `本日のゴミ捨て担当は${hl(sched.trashToday)}さんです。<br>`
+        + `明日朝のゴミ箱回収担当は${hl(sched.trashTomorrow)}さんです。<br>`
+        + `よろしくおねがいいたします。`;
     }
 
     function toast(msg, type = 'success') {
@@ -237,6 +246,12 @@
       setTimeout(() => t.remove(), 4000);
     }
     function errMsg(e) { return e?.message || String(e); }
+    function escAttr(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+    function escHtml(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
     function isAdmin() { return !!state.adminPw; }
     function openModal(title, html) {
       document.getElementById('modal-title').textContent = title;
@@ -244,6 +259,41 @@
       document.getElementById('modal-overlay').style.display = 'block';
     }
     function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+
+    function openStaffModal(staff) {
+      const isEdit = !!staff;
+      openModal(isEdit ? '社員編集' : '社員追加', `
+        <form id="staff-form">
+          <div class="form-row"><label>表示名（当番表・通知一覧用）</label><input name="name" required placeholder="例: 小笠原" value="${escAttr(staff?.name)}"></div>
+          <div class="form-row"><label>Slack @用の名前（任意）</label><input name="mention_name" placeholder="例: 小笠原 将太（未入力なら表示名を使用）" value="${escAttr(staff?.mention_name || '')}"></div>
+          <div class="form-row">
+            <label>Slack メンバーID（任意・色付きメンション用）</label>
+            <input name="slack_user_id" placeholder="例: U0123456789" value="${escAttr(staff?.slack_user_id || '')}">
+            <p style="font-size:11px;color:#64748b;margin:6px 0 0">Slack プロフィール → ⋮ → メンバーIDをコピー</p>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+            <button type="submit" class="btn btn-primary">${isEdit ? '保存' : '追加'}</button>
+          </div>
+        </form>`);
+      document.getElementById('staff-form').onsubmit = async (ev) => {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const payload = {
+          p_password: state.adminPw,
+          p_name: fd.get('name'),
+          p_mention_name: fd.get('mention_name') || null,
+          p_slack_user_id: fd.get('slack_user_id') || null,
+        };
+        const { error } = isEdit
+          ? await db.rpc('cleaning_update_staff', { ...payload, p_id: staff.id })
+          : await db.rpc('cleaning_add_staff', payload);
+        if (error) { toast(errMsg(error), 'error'); return; }
+        closeModal();
+        toast(isEdit ? '保存しました' : '追加しました');
+        await refresh();
+      };
+    }
 
     async function loadData() {
       const [{ data: staff, error: e1 }, { data: settingsRows, error: e2 }] = await Promise.all([
@@ -270,7 +320,7 @@
           <div class="task-label">${a.label}</div>
           <div class="task-name">${a.staff?.name || '—'}</div>
         </div>`).join('');
-      const preview = buildSlackMessage(sched);
+      const preview = buildSlackPreviewHtml(sched);
       return `
         <div class="card">
           <h2>📅 今日の当番（${fmtDateJa(today)}）</h2>
@@ -282,7 +332,7 @@
         </div>
         <div class="card">
           <h2>💬 Slack 通知プレビュー</h2>
-          <div class="preview-msg">${preview.replace(/</g, '&lt;')}</div>
+          <div class="preview-msg">${preview}</div>
         </div>
         <div class="card">
           <h2>📋 ローテーションのルール</h2>
@@ -321,8 +371,17 @@
       const items = sorted.map((s, i) => `
         <div class="staff-item" data-id="${s.id}">
           <div class="staff-order">${i + 1}</div>
-          <div class="staff-name">${s.name}</div>
+          <div class="staff-name">
+            ${escHtml(s.name)}
+            ${s.mention_name && s.mention_name !== s.name
+              ? `<span style="display:block;font-size:11px;color:#64748b;font-weight:400">Slack @: ${escHtml(s.mention_name)}</span>`
+              : ''}
+            ${s.slack_user_id
+              ? `<span style="display:block;font-size:11px;color:#0f766e;font-weight:400">ID: ${escHtml(s.slack_user_id)}</span>`
+              : ''}
+          </div>
           ${isAdmin() ? `
+            <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${s.id}">編集</button>
             <button class="btn btn-secondary btn-sm" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
             <button class="btn btn-secondary btn-sm" data-action="down" data-id="${s.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="btn btn-danger btn-sm" data-action="del" data-id="${s.id}">削除</button>
@@ -457,26 +516,17 @@
         return;
       }
       if (e.target.id === 'btn-add-staff') {
-        openModal('社員追加', `
-          <form id="add-staff-form">
-            <div class="form-row"><label>名前</label><input name="name" required placeholder="例: 田中太郎"></div>
-            <div style="display:flex;gap:8px;margin-top:14px">
-              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
-              <button type="submit" class="btn btn-primary">追加</button>
-            </div>
-          </form>`);
-        document.getElementById('add-staff-form').onsubmit = async (ev) => {
-          ev.preventDefault();
-          const name = new FormData(ev.target).get('name');
-          const { error } = await db.rpc('cleaning_add_staff', { p_password: state.adminPw, p_name: name });
-          if (error) { toast(errMsg(error), 'error'); return; }
-          closeModal(); toast('追加しました'); await refresh();
-        };
+        openStaffModal(null);
         return;
       }
 
       const action = e.target.dataset.action;
       const id = e.target.dataset.id;
+      if (action === 'edit' && id) {
+        const staff = state.staff.find(s => s.id === id);
+        if (staff) openStaffModal(staff);
+        return;
+      }
       if (action === 'del' && id) {
         if (!confirm('この社員を削除しますか？')) return;
         const { error } = await db.rpc('cleaning_delete_staff', { p_password: state.adminPw, p_id: id });
