@@ -25,6 +25,7 @@ COMMENT ON TABLE cleaning_staff IS '掃除当番社員（sort_order が当番順
 COMMENT ON COLUMN cleaning_staff.sort_order IS '当番順（0始まり。0=1番）';
 COMMENT ON COLUMN cleaning_staff.mention_name IS 'Slack @用の表示名（未設定時は name を使用。例: 小笠原 将太）';
 COMMENT ON COLUMN cleaning_staff.slack_user_id IS 'Slack メンバーID（U...）。設定すると通知でメンション色付き表示';
+COMMENT ON COLUMN cleaning_staff.is_active IS 'true=当番対象、false=休み（掃除当番から除外）';
 
 -- ============================================================
 --  設定
@@ -33,7 +34,8 @@ CREATE TABLE cleaning_settings (
   id                    int PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   rotation_start_date   date NOT NULL DEFAULT (timezone('Asia/Tokyo', now()))::date,
   slack_enabled         boolean NOT NULL DEFAULT false,
-  slack_webhook_url     text,
+  slack_bot_token       text,
+  slack_channel_id      text,
   cron_hour_jst         int NOT NULL DEFAULT 9 CHECK (cron_hour_jst BETWEEN 0 AND 23),
   cron_enabled          boolean NOT NULL DEFAULT true,
   last_cron_run_at      timestamptz,
@@ -56,6 +58,77 @@ LANGUAGE sql STABLE AS $$
   SELECT (timezone('Asia/Tokyo', now()))::date;
 $$;
 
+-- 祝日マスタ（日本の国民の祝日）
+CREATE TABLE cleaning_holidays (
+  holiday_date date PRIMARY KEY,
+  name text NOT NULL
+);
+
+COMMENT ON TABLE cleaning_holidays IS '掃除当番の休日（国民の祝日）';
+
+-- 2025〜2028 年（必要に応じて追加）
+INSERT INTO cleaning_holidays (holiday_date, name) VALUES
+  ('2025-01-01', '元日'), ('2025-01-13', '成人の日'), ('2025-02-11', '建国記念の日'),
+  ('2025-02-23', '天皇誕生日'), ('2025-02-24', '振替休日'), ('2025-03-20', '春分の日'),
+  ('2025-04-29', '昭和の日'), ('2025-05-03', '憲法記念日'), ('2025-05-04', 'みどりの日'),
+  ('2025-05-05', 'こどもの日'), ('2025-05-06', '振替休日'), ('2025-07-21', '海の日'),
+  ('2025-08-11', '山の日'), ('2025-09-15', '敬老の日'), ('2025-09-23', '秋分の日'),
+  ('2025-10-13', 'スポーツの日'), ('2025-11-03', '文化の日'), ('2025-11-23', '勤労感謝の日'),
+  ('2025-11-24', '振替休日'),
+  ('2026-01-01', '元日'), ('2026-01-12', '成人の日'), ('2026-02-11', '建国記念の日'),
+  ('2026-02-23', '天皇誕生日'), ('2026-03-20', '春分の日'), ('2026-04-29', '昭和の日'),
+  ('2026-05-03', '憲法記念日'), ('2026-05-04', 'みどりの日'), ('2026-05-05', 'こどもの日'),
+  ('2026-05-06', '振替休日'), ('2026-07-20', '海の日'), ('2026-08-11', '山の日'),
+  ('2026-09-21', '敬老の日'), ('2026-09-22', '国民の休日'), ('2026-09-23', '秋分の日'),
+  ('2026-10-12', 'スポーツの日'), ('2026-11-03', '文化の日'), ('2026-11-23', '勤労感謝の日'),
+  ('2027-01-01', '元日'), ('2027-01-11', '成人の日'), ('2027-02-11', '建国記念の日'),
+  ('2027-02-23', '天皇誕生日'), ('2027-03-21', '春分の日'), ('2027-04-29', '昭和の日'),
+  ('2027-05-03', '憲法記念日'), ('2027-05-04', 'みどりの日'), ('2027-05-05', 'こどもの日'),
+  ('2027-07-19', '海の日'), ('2027-08-11', '山の日'), ('2027-09-20', '敬老の日'),
+  ('2027-09-23', '秋分の日'), ('2027-10-11', 'スポーツの日'), ('2027-11-03', '文化の日'),
+  ('2027-11-23', '勤労感謝の日'),
+  ('2028-01-01', '元日'), ('2028-01-10', '成人の日'), ('2028-02-11', '建国記念の日'),
+  ('2028-02-23', '天皇誕生日'), ('2028-03-20', '春分の日'), ('2028-04-29', '昭和の日'),
+  ('2028-05-03', '憲法記念日'), ('2028-05-04', 'みどりの日'), ('2028-05-05', 'こどもの日'),
+  ('2028-07-17', '海の日'), ('2028-08-11', '山の日'), ('2028-09-18', '敬老の日'),
+  ('2028-09-22', '秋分の日'), ('2028-10-09', 'スポーツの日'), ('2028-11-03', '文化の日'),
+  ('2028-11-23', '勤労感謝の日')
+ON CONFLICT (holiday_date) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION cleaning_is_workday(p_date date)
+RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT extract(isodow FROM p_date) NOT IN (6, 7)
+    AND NOT EXISTS (SELECT 1 FROM cleaning_holidays h WHERE h.holiday_date = p_date);
+$$;
+
+CREATE OR REPLACE FUNCTION cleaning_next_workday(p_date date)
+RETURNS date
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_d date := p_date + 1;
+BEGIN
+  WHILE NOT cleaning_is_workday(v_d) LOOP
+    v_d := v_d + 1;
+  END LOOP;
+  RETURN v_d;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION cleaning_workdays_since_anchor(p_date date DEFAULT cleaning_jst_today())
+RETURNS int
+LANGUAGE sql STABLE AS $$
+  SELECT GREATEST(0, (
+    SELECT count(*)::int
+    FROM generate_series(
+      (SELECT rotation_start_date FROM cleaning_settings WHERE id = 1),
+      p_date,
+      '1 day'::interval
+    ) AS gs(d)
+    WHERE cleaning_is_workday(gs.d::date)
+  ) - 1);
+$$;
+
 CREATE OR REPLACE FUNCTION cleaning_days_since_anchor(p_date date DEFAULT cleaning_jst_today())
 RETURNS int
 LANGUAGE sql STABLE AS $$
@@ -75,14 +148,14 @@ LANGUAGE sql IMMUTABLE AS $$
   END;
 $$;
 
--- Slack 通知用: メンバーID があれば <@U...>（色付きメンション）、なければ太字
-CREATE OR REPLACE FUNCTION cleaning_slack_highlight(p_name text, p_slack_user_id text DEFAULT NULL)
+-- ゴミ担当行のみ @ メンション（当番一覧は名前のみ）
+CREATE OR REPLACE FUNCTION cleaning_slack_trash_mention(p_name text, p_slack_user_id text DEFAULT NULL)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
     WHEN p_slack_user_id IS NOT NULL AND trim(p_slack_user_id) <> '' THEN
       '<@' || trim(p_slack_user_id) || '>'
-    ELSE '*' || p_name || '*'
+    ELSE '@' || p_name
   END;
 $$;
 
@@ -97,6 +170,8 @@ DECLARE
   v_staff jsonb;
   v_count int;
   v_day int;
+  v_day_next int;
+  v_next_workday date;
   v_tasks text[] := ARRAY['ゴミ捨て','トイレ','フロア','空気清浄機','給湯室'];
   v_emojis text[] := ARRAY['🗑️','🚽','🧹','💨','☕'];
   v_result jsonb := '[]'::jsonb;
@@ -104,6 +179,7 @@ DECLARE
   v_idx int;
   v_idx_tomorrow int;
   v_name text;
+  v_off_reason text;
 BEGIN
   SELECT coalesce(jsonb_agg(jsonb_build_object(
     'id', s.id, 'name', s.name,
@@ -116,18 +192,37 @@ BEGIN
   WHERE s.is_active = true;
 
   v_count := jsonb_array_length(v_staff);
-  v_day := cleaning_days_since_anchor(p_date);
 
   IF v_count = 0 THEN
     RETURN jsonb_build_object(
       'date', p_date,
-      'day_offset', v_day,
+      'is_off_day', false,
+      'day_offset', 0,
       'staff_count', 0,
       'assignments', '[]'::jsonb,
       'trash_today', null,
       'trash_tomorrow', null
     );
   END IF;
+
+  IF NOT cleaning_is_workday(p_date) THEN
+    v_off_reason := CASE
+      WHEN extract(isodow FROM p_date) IN (6, 7) THEN 'weekend'
+      ELSE 'holiday'
+    END;
+    RETURN jsonb_build_object(
+      'date', p_date,
+      'is_off_day', true,
+      'off_reason', v_off_reason,
+      'day_offset', null,
+      'staff_count', v_count,
+      'assignments', '[]'::jsonb,
+      'trash_today', null,
+      'trash_tomorrow', null
+    );
+  END IF;
+
+  v_day := cleaning_workdays_since_anchor(p_date);
 
   FOR v_i IN 0..4 LOOP
     v_idx := cleaning_assignee_index(v_day, v_i, v_count);
@@ -145,9 +240,12 @@ BEGIN
   END LOOP;
 
   v_idx := cleaning_assignee_index(v_day, 0, v_count);
-  v_idx_tomorrow := cleaning_assignee_index(v_day + 1, 0, v_count);
+  v_next_workday := cleaning_next_workday(p_date);
+  v_day_next := cleaning_workdays_since_anchor(v_next_workday);
+  v_idx_tomorrow := cleaning_assignee_index(v_day_next, 0, v_count);
   RETURN jsonb_build_object(
     'date', p_date,
+    'is_off_day', false,
     'day_offset', v_day,
     'staff_count', v_count,
     'assignments', v_result,
@@ -182,6 +280,17 @@ AS $$
     WHERE id = 1
       AND admin_password_hash = extensions.crypt(p_password, admin_password_hash)
   );
+$$;
+
+-- ============================================================
+--  RPC: 祝日一覧
+-- ============================================================
+CREATE OR REPLACE FUNCTION cleaning_list_holidays()
+RETURNS TABLE(holiday_date date, name text)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT h.holiday_date, h.name FROM cleaning_holidays h ORDER BY h.holiday_date;
 $$;
 
 -- ============================================================
@@ -277,12 +386,15 @@ $$;
 --  RPC: 社員編集
 -- ============================================================
 DROP FUNCTION IF EXISTS cleaning_update_staff(text, uuid, text, text);
+DROP FUNCTION IF EXISTS cleaning_update_staff(text, uuid, text, text, text);
+DROP FUNCTION IF EXISTS cleaning_update_staff(text, uuid, text, text, text, boolean);
 CREATE OR REPLACE FUNCTION cleaning_update_staff(
   p_password text,
   p_id uuid,
   p_name text,
   p_mention_name text DEFAULT NULL,
-  p_slack_user_id text DEFAULT NULL
+  p_slack_user_id text DEFAULT NULL,
+  p_is_active boolean DEFAULT NULL
 )
 RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER
@@ -298,7 +410,30 @@ BEGIN
   UPDATE cleaning_staff SET
     name = trim(p_name),
     mention_name = NULLIF(trim(coalesce(p_mention_name, '')), ''),
-    slack_user_id = NULLIF(trim(coalesce(p_slack_user_id, '')), '')
+    slack_user_id = NULLIF(trim(coalesce(p_slack_user_id, '')), ''),
+    is_active = coalesce(p_is_active, is_active)
+  WHERE id = p_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '社員が見つかりません';
+  END IF;
+  RETURN true;
+END;
+$$;
+
+-- ============================================================
+--  RPC: 休み／復帰トグル
+-- ============================================================
+CREATE OR REPLACE FUNCTION cleaning_toggle_staff_leave(p_password text, p_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT cleaning_verify_admin(p_password) THEN
+    RAISE EXCEPTION 'パスワードが正しくありません';
+  END IF;
+  UPDATE cleaning_staff SET
+    is_active = NOT coalesce(is_active, true)
   WHERE id = p_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION '社員が見つかりません';
@@ -335,7 +470,8 @@ CREATE OR REPLACE FUNCTION cleaning_get_settings()
 RETURNS TABLE(
   rotation_start_date date,
   slack_enabled boolean,
-  slack_webhook_masked text,
+  slack_bot_token_masked text,
+  slack_channel_id text,
   cron_hour_jst int,
   cron_enabled boolean,
   last_cron_run_at timestamptz,
@@ -347,8 +483,9 @@ AS $$
   SELECT
     s.rotation_start_date,
     s.slack_enabled,
-    CASE WHEN s.slack_webhook_url IS NULL OR length(s.slack_webhook_url) < 8 THEN NULL
-         ELSE '****' || right(s.slack_webhook_url, 4) END,
+    CASE WHEN s.slack_bot_token IS NULL OR length(s.slack_bot_token) < 8 THEN NULL
+         ELSE '****' || right(s.slack_bot_token, 4) END,
+    s.slack_channel_id,
     s.cron_hour_jst,
     s.cron_enabled,
     s.last_cron_run_at,
@@ -363,7 +500,8 @@ CREATE OR REPLACE FUNCTION cleaning_save_settings(
   p_password text,
   p_rotation_start_date date,
   p_slack_enabled boolean,
-  p_slack_webhook_url text,
+  p_slack_bot_token text,
+  p_slack_channel_id text,
   p_cron_hour_jst int,
   p_cron_enabled boolean DEFAULT NULL
 )
@@ -378,10 +516,14 @@ BEGIN
   UPDATE cleaning_settings SET
     rotation_start_date = coalesce(p_rotation_start_date, rotation_start_date),
     slack_enabled = coalesce(p_slack_enabled, slack_enabled),
-    slack_webhook_url = CASE
-      WHEN p_slack_webhook_url IS NULL OR trim(p_slack_webhook_url) = '' THEN slack_webhook_url
-      WHEN p_slack_webhook_url LIKE '****%' THEN slack_webhook_url
-      ELSE trim(p_slack_webhook_url)
+    slack_bot_token = CASE
+      WHEN p_slack_bot_token IS NULL OR trim(p_slack_bot_token) = '' THEN slack_bot_token
+      WHEN p_slack_bot_token LIKE '****%' THEN slack_bot_token
+      ELSE trim(p_slack_bot_token)
+    END,
+    slack_channel_id = CASE
+      WHEN p_slack_channel_id IS NULL OR trim(p_slack_channel_id) = '' THEN slack_channel_id
+      ELSE trim(p_slack_channel_id)
     END,
     cron_hour_jst = coalesce(p_cron_hour_jst, cron_hour_jst),
     cron_enabled = coalesce(p_cron_enabled, cron_enabled),
@@ -430,8 +572,14 @@ DECLARE
   v_item jsonb;
   v_trash_today text;
   v_trash_tomorrow text;
+  v_trash_tomorrow_label text;
 BEGIN
   v_sched := cleaning_schedule_for_date(p_date);
+
+  IF coalesce(v_sched->>'is_off_day', 'false') = 'true' THEN
+    RETURN '【本日掃除当番】本日は土日祝のため掃除当番はありません。';
+  END IF;
+
   IF (v_sched->>'staff_count')::int = 0 THEN
     RETURN '【本日掃除当番】社員が登録されていません。';
   END IF;
@@ -439,28 +587,33 @@ BEGIN
   FOR v_item IN SELECT * FROM jsonb_array_elements(v_sched->'assignments')
   LOOP
     v_lines := v_lines || E'\n'
-      || cleaning_slack_highlight(v_item->>'staff_name', v_item->>'staff_slack_user_id')
-      || 'さん  → 「' || (v_item->>'task') || '」';
+      || (v_item->>'staff_name') || 'さん  → 「' || (v_item->>'task') || '」';
   END LOOP;
 
-  v_trash_today := cleaning_slack_highlight(
+  v_trash_today := cleaning_slack_trash_mention(
     v_sched->'trash_today'->>'staff_name',
     v_sched->'trash_today'->>'staff_slack_user_id'
   );
-  v_trash_tomorrow := cleaning_slack_highlight(
+  v_trash_tomorrow := cleaning_slack_trash_mention(
     v_sched->'trash_tomorrow'->>'staff_name',
     v_sched->'trash_tomorrow'->>'staff_slack_user_id'
   );
 
+  IF cleaning_is_workday(p_date + 1) THEN
+    v_trash_tomorrow_label := '明日朝のゴミ箱回収担当は';
+  ELSE
+    v_trash_tomorrow_label := '次回営業日朝のゴミ箱回収担当は';
+  END IF;
+
   RETURN '【本日掃除当番】' || v_lines || E'\n\n'
     || '本日のゴミ捨て担当は' || v_trash_today || 'さんです。' || E'\n'
-    || '明日朝のゴミ箱回収担当は' || v_trash_tomorrow || 'さんです。' || E'\n'
+    || v_trash_tomorrow_label || v_trash_tomorrow || 'さんです。' || E'\n'
     || 'よろしくおねがいいたします。';
 END;
 $$;
 
 -- ============================================================
---  Slack 送信（Webhook）
+--  Slack 送信（Bot Token + チャンネルID）
 -- ============================================================
 CREATE OR REPLACE FUNCTION cleaning_send_slack(p_date date DEFAULT cleaning_jst_today())
 RETURNS jsonb
@@ -468,39 +621,63 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
 DECLARE
-  v_url text;
+  v_token text;
+  v_channel text;
   v_enabled boolean;
   v_msg text;
   v_resp extensions.http_response;
+  v_body jsonb;
 BEGIN
-  SELECT slack_webhook_url, slack_enabled INTO v_url, v_enabled
+  SELECT slack_bot_token, slack_channel_id, slack_enabled
+  INTO v_token, v_channel, v_enabled
   FROM cleaning_settings WHERE id = 1;
 
   IF NOT coalesce(v_enabled, false) THEN
     RETURN jsonb_build_object('ok', false, 'error', 'Slack通知が無効です');
   END IF;
-  IF v_url IS NULL OR trim(v_url) = '' THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'Webhook URL が未設定です');
+  IF v_token IS NULL OR trim(v_token) = '' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Bot Token が未設定です');
+  END IF;
+  IF trim(v_token) NOT LIKE 'xoxb-%' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Bot Token は xoxb- で始まる Bot User OAuth Token を設定してください');
+  END IF;
+  IF v_channel IS NULL OR trim(v_channel) = '' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'チャンネルID が未設定です');
+  END IF;
+
+  IF NOT cleaning_is_workday(p_date) THEN
+    RETURN jsonb_build_object('ok', true, 'skipped', true, 'reason', 'off_day');
   END IF;
 
   v_msg := cleaning_build_slack_message(p_date);
 
   SELECT * INTO v_resp FROM extensions.http((
-    'POST', v_url,
-    ARRAY[extensions.http_header('Content-Type', 'application/json')],
+    'POST', 'https://slack.com/api/chat.postMessage',
+    ARRAY[
+      extensions.http_header('Content-Type', 'application/json; charset=utf-8'),
+      extensions.http_header('Authorization', 'Bearer ' || trim(v_token))
+    ],
     'application/json',
     jsonb_build_object(
+      'channel', trim(v_channel),
       'blocks', jsonb_build_array(jsonb_build_object(
         'type', 'section',
         'text', jsonb_build_object('type', 'mrkdwn', 'text', v_msg)
-      ))
+      )),
+      'text', v_msg
     )::text
   )::extensions.http_request);
 
-  IF v_resp.status BETWEEN 200 AND 299 THEN
+  v_body := coalesce(v_resp.content::jsonb, '{}'::jsonb);
+  IF v_resp.status = 200 AND coalesce(v_body->>'ok', 'false') = 'true' THEN
     RETURN jsonb_build_object('ok', true, 'message', v_msg);
   END IF;
-  RETURN jsonb_build_object('ok', false, 'error', 'Slack HTTP ' || v_resp.status::text, 'body', v_resp.content);
+  RETURN jsonb_build_object(
+    'ok', false,
+    'error', coalesce(v_body->>'error', 'Slack HTTP ' || v_resp.status::text),
+    'needed', v_body->>'needed',
+    'body', v_resp.content
+  );
 END;
 $$;
 
@@ -528,18 +705,22 @@ ALTER TABLE cleaning_settings DISABLE ROW LEVEL SECURITY;
 
 GRANT SELECT ON cleaning_staff TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_jst_today() TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_is_workday(date) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_workdays_since_anchor(date) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_list_holidays() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_days_since_anchor(date) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_assignee_index(int, int, int) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_schedule_for_date(date) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_build_slack_message(date) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_check_password(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_list_staff() TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION cleaning_slack_highlight(text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_slack_trash_mention(text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_add_staff(text, text, text, text) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION cleaning_update_staff(text, uuid, text, text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_update_staff(text, uuid, text, text, text, boolean) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_toggle_staff_leave(text, uuid) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_delete_staff(text, uuid) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_reorder_staff(text, uuid[]) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_get_settings() TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION cleaning_save_settings(text, date, boolean, text, int, boolean) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_save_settings(text, date, boolean, text, text, int, boolean) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_change_password(text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_test_slack(text) TO anon, authenticated;

@@ -8,13 +8,13 @@ ALTER TABLE cleaning_staff
 
 COMMENT ON COLUMN cleaning_staff.slack_user_id IS 'Slack メンバーID（U...）。設定すると通知でメンション色付き表示';
 
-CREATE OR REPLACE FUNCTION cleaning_slack_highlight(p_name text, p_slack_user_id text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION cleaning_slack_trash_mention(p_name text, p_slack_user_id text DEFAULT NULL)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
     WHEN p_slack_user_id IS NOT NULL AND trim(p_slack_user_id) <> '' THEN
       '<@' || trim(p_slack_user_id) || '>'
-    ELSE '*' || p_name || '*'
+    ELSE '@' || p_name
   END;
 $$;
 
@@ -195,15 +195,14 @@ BEGIN
   FOR v_item IN SELECT * FROM jsonb_array_elements(v_sched->'assignments')
   LOOP
     v_lines := v_lines || E'\n'
-      || cleaning_slack_highlight(v_item->>'staff_name', v_item->>'staff_slack_user_id')
-      || 'さん  → 「' || (v_item->>'task') || '」';
+      || (v_item->>'staff_name') || 'さん  → 「' || (v_item->>'task') || '」';
   END LOOP;
 
-  v_trash_today := cleaning_slack_highlight(
+  v_trash_today := cleaning_slack_trash_mention(
     v_sched->'trash_today'->>'staff_name',
     v_sched->'trash_today'->>'staff_slack_user_id'
   );
-  v_trash_tomorrow := cleaning_slack_highlight(
+  v_trash_tomorrow := cleaning_slack_trash_mention(
     v_sched->'trash_tomorrow'->>'staff_name',
     v_sched->'trash_tomorrow'->>'staff_slack_user_id'
   );
@@ -257,7 +256,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION cleaning_slack_highlight(text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_slack_trash_mention(text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_list_staff() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_add_staff(text, text, text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_update_staff(text, uuid, text, text, text) TO anon, authenticated;

@@ -134,6 +134,27 @@
     }
     .login-bar { font-size: 12px; opacity: 0.9; }
     .week-day { font-size: 11px; color: #64748b; }
+    .calendar-wrap { overflow: auto; max-height: 75vh; border: 1px solid #e2e8f0; border-radius: 10px; }
+    .calendar-wrap table { font-size: 12px; min-width: 720px; }
+    .calendar-wrap th, .calendar-wrap td { padding: 7px 8px; white-space: nowrap; }
+    .calendar-wrap tr.today-row { background: #ecfdf5; }
+    .calendar-wrap tr.off-row { background: #f8fafc; color: #94a3b8; }
+    .calendar-wrap tr.off-row td { font-style: italic; }
+    .off-day-banner {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px;
+      font-size: 15px;
+      color: #64748b;
+      text-align: center;
+    }
+    .staff-item.on-leave { opacity: 0.65; background: #f8fafc; }
+    .staff-badge-leave {
+      display: inline-block; font-size: 10px; font-weight: 700;
+      color: #b45309; background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: 6px; padding: 2px 6px; margin-left: 6px;
+    }
     .preview-msg {
       background: #1e293b; color: #e2e8f0;
       border-radius: 10px; padding: 14px;
@@ -150,7 +171,7 @@
     <h1>🧹 会社掃除当番</h1>
     <nav>
       <button class="nav-btn active" data-page="home">今日の当番</button>
-      <button class="nav-btn" data-page="week">週間</button>
+      <button class="nav-btn" data-page="week">1か月</button>
       <button class="nav-btn" data-page="staff">社員・順番</button>
       <button class="nav-btn" data-page="settings">設定</button>
     </nav>
@@ -182,8 +203,10 @@
       { key: 'air', label: '空気清浄機', emoji: '💨' },
       { key: 'kitchen', label: '給湯室', emoji: '☕' },
     ];
-
-    let state = { staff: [], settings: null, page: 'home', adminPw: sessionStorage.getItem('cleaning_admin') || '' };
+    let state = {
+      staff: [], settings: null, holidays: new Set(), page: 'home',
+      adminPw: sessionStorage.getItem('cleaning_admin') || '',
+    };
 
     function jstToday() {
       return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
@@ -202,38 +225,90 @@
       const t = new Date(target + 'T12:00:00');
       return Math.round((t - a) / 86400000);
     }
+    function isWeekend(dateStr) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+      return dow === 0 || dow === 6;
+    }
+    function isWorkday(dateStr) {
+      return !isWeekend(dateStr) && !state.holidays.has(dateStr);
+    }
+    function offDayLabel(dateStr) {
+      if (isWeekend(dateStr)) return '土日';
+      if (state.holidays.has(dateStr)) return '祝日';
+      return '';
+    }
+    function workdaysSinceAnchor(anchor, target) {
+      let count = 0;
+      let d = anchor;
+      while (d <= target) {
+        if (isWorkday(d)) count++;
+        if (d === target) break;
+        d = addDays(d, 1);
+      }
+      return Math.max(0, count - 1);
+    }
+    function nextWorkday(dateStr) {
+      let d = addDays(dateStr, 1);
+      while (!isWorkday(d)) d = addDays(d, 1);
+      return d;
+    }
     function assigneeIndex(dayOffset, taskIndex, staffCount) {
       if (staffCount <= 0) return -1;
       return ((dayOffset - taskIndex) % staffCount + staffCount) % staffCount;
     }
+    function staffOnDuty(staff) {
+      return staff.filter(s => s.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+    }
     function calcSchedule(staff, anchorDate, targetDate) {
-      const active = staff.filter(s => s.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+      const active = staffOnDuty(staff);
       const N = active.length;
-      const D = daysBetween(anchorDate, targetDate);
+      if (!isWorkday(targetDate)) {
+        return {
+          date: targetDate, isOffDay: true, offLabel: offDayLabel(targetDate),
+          dayOffset: null, staffCount: N, assignments: [], trashToday: null, trashTomorrow: null,
+        };
+      }
+      const D = workdaysSinceAnchor(anchorDate, targetDate);
       const assignments = TASKS.map((task, t) => {
         const idx = assigneeIndex(D, t, N);
         const person = idx >= 0 ? active[idx] : null;
         return { ...task, taskIndex: t, staff: person, sortOrder: idx };
       });
       const trashToday = assignments[0]?.staff || null;
-      const trashTomorrowIdx = assigneeIndex(D + 1, 0, N);
+      const nextWd = nextWorkday(targetDate);
+      const Dnext = workdaysSinceAnchor(anchorDate, nextWd);
+      const trashTomorrowIdx = assigneeIndex(Dnext, 0, N);
       const trashTomorrow = trashTomorrowIdx >= 0 ? active[trashTomorrowIdx] : null;
-      return { date: targetDate, dayOffset: D, staffCount: N, assignments, trashToday, trashTomorrow };
+      const trashTomorrowIsNextCalDay = nextWd === addDays(targetDate, 1);
+      return {
+        date: targetDate, isOffDay: false, dayOffset: D, staffCount: N, assignments,
+        trashToday, trashTomorrow, trashTomorrowIsNextCalDay,
+      };
     }
     function buildSlackPreviewHtml(sched) {
-      const hl = (staff) => {
+      if (sched.isOffDay) {
+        return '【本日掃除当番】本日は土日祝のため掃除当番はありません。';
+      }
+      const plainName = (staff) => escHtml(staff?.name || '—');
+      const mentionHtml = (staff) => {
         const n = staff?.name || '—';
-        if (staff?.slack_user_id) {
-          return `<span class="name-highlight name-mention">@${escHtml(n)}</span>`;
-        }
-        return `<span class="name-highlight">${escHtml(n)}</span>`;
+        const cls = staff?.slack_user_id ? 'name-highlight name-mention' : 'name-highlight';
+        return `<span class="${cls}">@${escHtml(n)}</span>`;
       };
       const lines = sched.assignments.map(a =>
-        `${hl(a.staff)}さん  → 「${escHtml(a.label)}」`
+        `${plainName(a.staff)}さん  → 「${escHtml(a.label)}」`
       ).join('<br>');
+      const renderTrashLine = (prefix, staff) => {
+        const at = '@' + (staff?.name || '—');
+        return `${escHtml(prefix)}${mentionHtml(staff)}${escHtml('さんです。')}`;
+      };
+      const trashTomorrowPrefix = sched.trashTomorrowIsNextCalDay
+        ? '明日朝のゴミ箱回収担当は'
+        : '次回営業日朝のゴミ箱回収担当は';
       return `【本日掃除当番】<br>${lines}<br><br>`
-        + `本日のゴミ捨て担当は${hl(sched.trashToday)}さんです。<br>`
-        + `明日朝のゴミ箱回収担当は${hl(sched.trashTomorrow)}さんです。<br>`
+        + `${renderTrashLine('本日のゴミ捨て担当は', sched.trashToday)}<br>`
+        + `${renderTrashLine(trashTomorrowPrefix, sched.trashTomorrow)}<br>`
         + `よろしくおねがいいたします。`;
     }
 
@@ -271,6 +346,7 @@
             <input name="slack_user_id" placeholder="例: U0123456789" value="${escAttr(staff?.slack_user_id || '')}">
             <p style="font-size:11px;color:#64748b;margin:6px 0 0">Slack プロフィール → ⋮ → メンバーIDをコピー</p>
           </div>
+          ${isEdit ? `<div class="form-row"><label><input type="checkbox" name="on_leave" ${staff?.is_active === false ? 'checked' : ''}> 休み中（掃除当番から除外）</label></div>` : ''}
           <div style="display:flex;gap:8px;margin-top:14px">
             <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
             <button type="submit" class="btn btn-primary">${isEdit ? '保存' : '追加'}</button>
@@ -286,7 +362,11 @@
           p_slack_user_id: fd.get('slack_user_id') || null,
         };
         const { error } = isEdit
-          ? await db.rpc('cleaning_update_staff', { ...payload, p_id: staff.id })
+          ? await db.rpc('cleaning_update_staff', {
+            ...payload,
+            p_id: staff.id,
+            p_is_active: fd.get('on_leave') !== 'on',
+          })
           : await db.rpc('cleaning_add_staff', payload);
         if (error) { toast(errMsg(error), 'error'); return; }
         closeModal();
@@ -296,14 +376,18 @@
     }
 
     async function loadData() {
-      const [{ data: staff, error: e1 }, { data: settingsRows, error: e2 }] = await Promise.all([
+      const [{ data: staff, error: e1 }, { data: settingsRows, error: e2 }, { data: holidays, error: e3 }] = await Promise.all([
         db.rpc('cleaning_list_staff'),
         db.rpc('cleaning_get_settings'),
+        db.rpc('cleaning_list_holidays'),
       ]);
       if (e1) throw e1;
       if (e2) throw e2;
       state.staff = staff || [];
       state.settings = settingsRows?.[0] || { rotation_start_date: jstToday() };
+      state.holidays = e3
+        ? new Set()
+        : new Set((holidays || []).map(h => String(h.holiday_date).slice(0, 10)));
     }
 
     function getAnchor() { return state.settings?.rotation_start_date || jstToday(); }
@@ -313,6 +397,28 @@
       const sched = calcSchedule(state.staff, getAnchor(), today);
       if (!sched.staffCount) {
         return `<div class="card"><p class="empty">社員が登録されていません。<br>「社員・順番」から登録してください。</p></div>`;
+      }
+      if (sched.isOffDay) {
+        return `
+        <div class="card">
+          <h2>📅 今日の当番（${fmtDateJa(today)}）</h2>
+          <div class="off-day-banner">本日は<strong>${escHtml(sched.offLabel)}</strong>のため、掃除当番はありません。</div>
+        </div>
+        <div class="card">
+          <h2>💬 Slack 通知プレビュー</h2>
+          <div class="preview-msg">${buildSlackPreviewHtml(sched)}</div>
+          <p style="font-size:11px;color:#64748b;margin:10px 0 0">土日祝は Slack 通知も送信されません。</p>
+        </div>
+        <div class="card">
+          <h2>📋 ローテーションのルール</h2>
+          <ul class="rule-list">
+            <li>社員を登録し、<strong>当番順（1番・2番…）</strong>を決めます</li>
+            <li><strong>平日（土日祝除く）</strong>のみ掃除当番が回ります</li>
+            <li><strong>ゴミ捨て</strong>は営業日ごとにローテーション（1番→2番→3番→…→1番）</li>
+            <li>今日ゴミ捨ての人は、<strong>次の営業日トイレ → その次フロア → 空気清浄機 → 給湯室</strong>と進みます</li>
+            <li>平日の朝に Slack で通知します</li>
+          </ul>
+        </div>`;
       }
       const rows = sched.assignments.map(a => `
         <div class="task-row${a.key === 'trash' ? ' trash' : ''}">
@@ -338,41 +444,50 @@
           <h2>📋 ローテーションのルール</h2>
           <ul class="rule-list">
             <li>社員を登録し、<strong>当番順（1番・2番…）</strong>を決めます</li>
-            <li><strong>ゴミ捨て</strong>は順番どおり毎日ローテーション（1番→2番→3番→…→1番）</li>
-            <li>今日ゴミ捨ての人は、<strong>明日トイレ → 明後日フロア → 空気清浄機 → 給湯室</strong>と進みます</li>
-            <li>毎朝 Slack に今日の5担当とゴミ捨て情報を通知します</li>
+            <li><strong>平日（土日祝除く）</strong>のみ掃除当番が回ります</li>
+            <li><strong>ゴミ捨て</strong>は営業日ごとにローテーション（1番→2番→3番→…→1番）</li>
+            <li>今日ゴミ捨ての人は、<strong>次の営業日トイレ → その次フロア → 空気清浄機 → 給湯室</strong>と進みます</li>
+            <li>平日の朝に Slack で通知します</li>
           </ul>
         </div>`;
     }
 
     function renderWeek() {
       const today = jstToday();
-      let html = `<div class="card"><h2>📆 7日間の当番表</h2><table>
+      const end = addDays(today, 30);
+      let html = `<div class="card"><h2>📆 今後1か月の当番表</h2>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px">${fmtDateJa(today)} 〜 ${fmtDateJa(end)}（土日祝・休み中の社員は当番なし）</p>
+        <div class="calendar-wrap"><table>
         <thead><tr><th>日付</th>${TASKS.map(t => `<th>${t.emoji} ${t.label}</th>`).join('')}<th>🗑️翌日</th></tr></thead><tbody>`;
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i <= 30; i++) {
         const d = addDays(today, i);
         const s = calcSchedule(state.staff, getAnchor(), d);
         const label = i === 0 ? `<strong>今日</strong><br><span class="week-day">${fmtDateJa(d)}</span>`
           : `<span class="week-day">${fmtDateJa(d)}</span>`;
+        const rowCls = i === 0 ? ' class="today-row"' : '';
         if (!s.staffCount) {
-          html += `<tr><td>${label}</td><td colspan="6" class="empty">社員未登録</td></tr>`;
+          html += `<tr${rowCls}><td>${label}</td><td colspan="6" class="empty">当番対象の社員がいません</td></tr>`;
           continue;
         }
-        html += `<tr><td>${label}</td>`
-          + s.assignments.map(a => `<td>${a.staff?.name || '—'}</td>`).join('')
-          + `<td style="color:#b45309;font-weight:600">${s.trashTomorrow?.name || '—'}</td></tr>`;
+        if (s.isOffDay) {
+          html += `<tr${rowCls} class="off-row"><td>${label}</td><td colspan="6">休（${escHtml(s.offLabel)}）</td></tr>`;
+          continue;
+        }
+        html += `<tr${rowCls}><td>${label}</td>`
+          + s.assignments.map(a => `<td>${escHtml(a.staff?.name || '—')}</td>`).join('')
+          + `<td style="color:#b45309;font-weight:600">${escHtml(s.trashTomorrow?.name || '—')}</td></tr>`;
       }
-      html += '</tbody></table></div>';
+      html += '</tbody></table></div></div>';
       return html;
     }
 
     function renderStaff() {
       const sorted = [...state.staff].sort((a, b) => a.sort_order - b.sort_order);
       const items = sorted.map((s, i) => `
-        <div class="staff-item" data-id="${s.id}">
+        <div class="staff-item${s.is_active === false ? ' on-leave' : ''}" data-id="${s.id}">
           <div class="staff-order">${i + 1}</div>
           <div class="staff-name">
-            ${escHtml(s.name)}
+            ${escHtml(s.name)}${s.is_active === false ? '<span class="staff-badge-leave">休み</span>' : ''}
             ${s.mention_name && s.mention_name !== s.name
               ? `<span style="display:block;font-size:11px;color:#64748b;font-weight:400">Slack @: ${escHtml(s.mention_name)}</span>`
               : ''}
@@ -382,6 +497,7 @@
           </div>
           ${isAdmin() ? `
             <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${s.id}">編集</button>
+            <button class="btn btn-secondary btn-sm" data-action="leave" data-id="${s.id}">${s.is_active === false ? '復帰' : '休み'}</button>
             <button class="btn btn-secondary btn-sm" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
             <button class="btn btn-secondary btn-sm" data-action="down" data-id="${s.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="btn btn-danger btn-sm" data-action="del" data-id="${s.id}">削除</button>
@@ -429,9 +545,15 @@
         `<option value="${h}"${(s.cron_hour_jst ?? 9) === h ? ' selected' : ''}>${h}:00</option>`).join('')}</select>
               </div>
               <div class="form-row">
-                <label>Webhook URL${s.slack_webhook_masked ? `（登録済: ${s.slack_webhook_masked}）` : ''}</label>
-                <input type="url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
+                <label>チャンネルID</label>
+                <input name="slack_channel_id" placeholder="例: C0123456789" value="${escAttr(s.slack_channel_id || '')}" required>
+                <p style="font-size:11px;color:#64748b;margin:6px 0 0">チャンネル詳細（ℹ️）→ 最下部の ID（C... 公開 / G... 非公開）。Bot Token と<strong>同じワークスペース</strong>の ID。共有チャンネルは Bot を <code>/invite @App名</code></p>
               </div>
+            </div>
+            <div class="form-row">
+              <label>Bot Token（xoxb-...）${s.slack_bot_token_masked ? `（登録済: ${s.slack_bot_token_masked}）` : ''}</label>
+              <input type="password" name="slack_bot_token" placeholder="xoxb-..." autocomplete="off">
+              <p style="font-size:11px;color:#64748b;margin:6px 0 0">Slack App → OAuth &amp; Permissions → <strong>Bot Token Scopes</strong> に <code>chat:write</code> を追加（<code>incoming-webhook</code> だけでは不可）→ <strong>Reinstall to Workspace</strong> → 新しい <strong>Bot User OAuth Token</strong>（xoxb-...）を保存</p>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
               <button type="submit" class="btn btn-primary">Slack 設定を保存</button>
@@ -527,6 +649,18 @@
         if (staff) openStaffModal(staff);
         return;
       }
+      if (action === 'leave' && id) {
+        const staff = state.staff.find(s => s.id === id);
+        const goingLeave = staff?.is_active !== false;
+        const { error } = await db.rpc('cleaning_toggle_staff_leave', {
+          p_password: state.adminPw,
+          p_id: id,
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast(goingLeave ? '休みに設定しました' : '復帰しました');
+        await refresh();
+        return;
+      }
       if (action === 'del' && id) {
         if (!confirm('この社員を削除しますか？')) return;
         const { error } = await db.rpc('cleaning_delete_staff', { p_password: state.adminPw, p_id: id });
@@ -552,7 +686,23 @@
       if (e.target.id === 'btn-test-slack') {
         const { data, error } = await db.rpc('cleaning_test_slack', { p_password: state.adminPw });
         if (error) { toast(errMsg(error), 'error'); return; }
-        if (!data?.ok) { toast(data?.error || '送信失敗', 'error'); return; }
+        if (data?.skipped) { toast('本日は土日祝のため Slack 通知は送信しません'); return; }
+        if (!data?.ok) {
+          const err = data?.error || '送信失敗';
+          if (err === 'invalid_auth') {
+            toast('invalid_auth: Bot Token（xoxb-...）を再取得して保存してください', 'error');
+          } else if (err === 'missing_scope') {
+            const need = data?.needed || 'chat:write';
+            toast(`missing_scope: Bot Token Scopes に ${need}（UI では chat:write）を追加し、再インストール後に新トークンを保存してください`, 'error');
+          } else if (err === 'channel_not_found') {
+            toast('channel_not_found: チャンネルID（C.../G...）を確認。Bot Token と同じワークスペースか、Bot を /invite 済みか確認してください', 'error');
+          } else if (err === 'not_in_channel') {
+            toast('not_in_channel: 通知先チャンネルで /invite @App名 を実行してください', 'error');
+          } else {
+            toast(err, 'error');
+          }
+          return;
+        }
         toast('Slack にテスト送信しました');
       }
     });
@@ -565,7 +715,8 @@
           p_password: state.adminPw,
           p_rotation_start_date: fd.get('rotation_start_date'),
           p_slack_enabled: null,
-          p_slack_webhook_url: null,
+          p_slack_bot_token: null,
+          p_slack_channel_id: null,
           p_cron_hour_jst: null,
           p_cron_enabled: null,
         });
@@ -579,7 +730,8 @@
           p_password: state.adminPw,
           p_rotation_start_date: null,
           p_slack_enabled: fd.get('slack_enabled') === 'on',
-          p_slack_webhook_url: fd.get('slack_webhook_url') || null,
+          p_slack_bot_token: fd.get('slack_bot_token') || null,
+          p_slack_channel_id: fd.get('slack_channel_id') || null,
           p_cron_hour_jst: parseInt(fd.get('cron_hour_jst'), 10),
           p_cron_enabled: fd.get('cron_enabled') === 'on',
         });
