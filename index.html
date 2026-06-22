@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="ja">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -204,10 +203,11 @@
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     let state = {
-      staff: [], tasks: [], settings: null, holidays: new Set(),
+      staff: [], tasks: [], settings: null, holidays: new Set(), staffOffs: [],
       page: 'home',
       adminPw: sessionStorage.getItem('cleaning_admin') || '',
       tasksDbReady: false,
+      staffOffsDbReady: false,
       calendarMonth: null,
     };
 
@@ -382,6 +382,20 @@
       if (staffCount <= 0) return -1;
       return ((dayOffset - taskIndex) % staffCount + staffCount) % staffCount;
     }
+    function isStaffOffOnDate(staffId, dateStr) {
+      return state.staffOffs.some(o => o.staff_id === staffId && o.off_date === dateStr);
+    }
+    function resolveAssignee(active, dayOffset, taskIndex, dateStr) {
+      const N = active.length;
+      if (N <= 0) return { person: null, idx: -1 };
+      let idx = assigneeIndex(dayOffset, taskIndex, N);
+      for (let i = 0; i < N; i++) {
+        const person = active[idx];
+        if (!isStaffOffOnDate(person.id, dateStr)) return { person, idx };
+        idx = (idx + 1) % N;
+      }
+      return { person: null, idx: -1 };
+    }
     function calcSchedule(staff, anchorDate, targetDate) {
       const active = staff.filter(s => s.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
       const tasks = getActiveTasks();
@@ -395,8 +409,9 @@
         let idx = -1;
         let person = null;
         if (!skipped && N > 0) {
-          idx = assigneeIndex(D, t, N);
-          person = idx >= 0 ? active[idx] : null;
+          const resolved = resolveAssignee(active, D, t, targetDate);
+          idx = resolved.idx;
+          person = resolved.person;
         }
         return { ...task, taskIndex: t, staff: person, sortOrder: idx, skipped, skipReason };
       });
@@ -408,8 +423,8 @@
       const primaryToday = assignments[0]?.staff || null;
       let primaryTomorrow = null;
       if (N > 0 && primaryTask && !primaryTomorrowSkipped) {
-        const idx = assigneeIndex(Dtomorrow, 0, N);
-        primaryTomorrow = idx >= 0 ? active[idx] : null;
+        const resolved = resolveAssignee(active, Dtomorrow, 0, tomorrow);
+        primaryTomorrow = resolved.person;
       }
       return {
         date: targetDate,
@@ -457,11 +472,12 @@
     function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
     async function loadData() {
-      const [staffRes, settingsRes, tasksRes, holidaysRes] = await Promise.all([
+      const [staffRes, settingsRes, tasksRes, holidaysRes, staffOffsRes] = await Promise.all([
         db.rpc('cleaning_list_staff'),
         db.rpc('cleaning_get_settings'),
         db.rpc('cleaning_list_tasks'),
         db.rpc('cleaning_list_holidays'),
+        db.rpc('cleaning_list_staff_offs'),
       ]);
       if (staffRes.error) throw staffRes.error;
       if (settingsRes.error) throw settingsRes.error;
@@ -490,6 +506,18 @@
             || (t.skip_friday == null && t.sort_order === 0 && t.label === 'ゴミ捨て'),
         }));
         state.tasksDbReady = true;
+      }
+
+      if (staffOffsRes.error) {
+        if (isTasksRpcMissing(staffOffsRes.error)) {
+          state.staffOffs = [];
+          state.staffOffsDbReady = false;
+        } else {
+          throw staffOffsRes.error;
+        }
+      } else {
+        state.staffOffs = staffOffsRes.data || [];
+        state.staffOffsDbReady = true;
       }
     }
 
@@ -606,6 +634,14 @@
             <button class="btn btn-danger btn-sm" data-scope="staff" data-action="del" data-id="${s.id}">削除</button>
           ` : ''}
         </div>`).join('');
+      const offs = [...state.staffOffs].sort((a, b) => a.off_date.localeCompare(b.off_date) || (a.staff_name || '').localeCompare(b.staff_name || ''));
+      const offRows = offs.map(o => `
+        <tr>
+          <td>${fmtDateJaWithWeekday(o.off_date)}</td>
+          <td>${o.staff_name || '—'}</td>
+          <td>${isAdmin() && state.staffOffsDbReady ? `<button class="btn btn-danger btn-sm" data-scope="staff-off" data-action="del" data-id="${o.id}">削除</button>` : ''}</td>
+        </tr>`).join('');
+      const staffOptions = sorted.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
       return `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -614,6 +650,30 @@
           </div>
           ${items || '<p class="empty">社員がいません</p>'}
           ${!isAdmin() ? '<p style="font-size:12px;color:#94a3b8;margin-top:12px">編集するには管理者ログインが必要です</p>' : ''}
+        </div>
+        <div class="card">
+          <h2 style="margin:0 0 12px">📅 休み設定</h2>
+          ${!state.staffOffsDbReady ? `<p style="font-size:13px;color:#b45309;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin:0 0 12px">
+            休み設定は現在使えません。管理者にお問い合わせください。
+          </p>` : ''}
+          <p style="font-size:12px;color:#64748b;margin:0 0 12px">休みの日は、その日の当番を次の人に振り替えます。</p>
+          ${isAdmin() && state.staffOffsDbReady && sorted.length ? `
+            <form id="staff-off-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
+              <div class="form-row" style="margin:0;min-width:140px">
+                <label>社員</label>
+                <select name="staff_id" required>${staffOptions}</select>
+              </div>
+              <div class="form-row" style="margin:0">
+                <label>休みの日</label>
+                <input type="date" name="off_date" required>
+              </div>
+              <button type="submit" class="btn btn-primary">登録</button>
+            </form>
+          ` : ''}
+          ${offRows ? `<div class="cal-table-wrap"><table>
+            <thead><tr><th>日付</th><th>社員</th><th></th></tr></thead>
+            <tbody>${offRows}</tbody>
+          </table></div>` : '<p class="empty">休みの登録はありません</p>'}
         </div>`;
     }
 
@@ -716,13 +776,35 @@
           <table class="guide-table">
             <thead><tr><th>メニュー</th><th>できること</th></tr></thead>
             <tbody>
-              <tr><td>社員・順番</td><td>メンバーの追加・削除、当番順（1番・2番…）の変更</td></tr>
-              <tr><td>掃除項目</td><td>ゴミ捨て・トイレなどの項目の追加・名前変更</td></tr>
+              <tr><td>社員・順番</td><td>メンバーの追加・削除、当番順の変更、休みの登録</td></tr>
+              <tr><td>掃除項目</td><td>ゴミ捨て・トイレなどの項目の追加・編集・順番変更</td></tr>
               <tr><td>設定</td><td>運用開始日、Slack 通知の時刻、パスワードの変更</td></tr>
             </tbody>
           </table>
 
-          <h3>3. 当番の決まり方</h3>
+          <h3>3. 社員・順番の操作</h3>
+          <p><strong>社員・順番</strong>タブで、当番に入るメンバーを管理します。</p>
+          <ul>
+            <li><strong>＋ 社員追加</strong> … 新しいメンバーを登録します</li>
+            <li><strong>↑ ↓</strong> … 当番順（1番・2番・3番…）を入れ替えます。上にあるほど先に当番です</li>
+            <li><strong>削除</strong> … 退職などで当番から外すときに使います</li>
+          </ul>
+          <p><strong>休み設定</strong>（同じタブの下の方）</p>
+          <ul>
+            <li>社員と日付を選んで <strong>登録</strong> … その日は休みとして、当番を次の人に振り替えます</li>
+            <li>一覧の <strong>削除</strong> … 登録した休みを取り消します</li>
+          </ul>
+
+          <h3>4. 掃除項目の操作</h3>
+          <p><strong>掃除項目</strong>タブで、掃除の種類（ゴミ捨て・トイレなど）を管理します。</p>
+          <ul>
+            <li><strong>＋ 項目追加</strong> … 新しい掃除項目を追加します</li>
+            <li><strong>編集</strong> … 名前や絵文字を変更します</li>
+            <li><strong>↑ ↓</strong> … 項目の順番を変更します。<strong>1番目がローテーションの起点</strong>です（通常はゴミ捨て）</li>
+            <li><strong>削除</strong> … 不要になった項目を削除します（最低1つは残ります）</li>
+          </ul>
+
+          <h3>5. 当番の決まり方</h3>
           <ul>
             <li>社員は <strong>1番 → 2番 → 3番…</strong> の順で交代します</li>
             <li><strong>ゴミ捨て</strong>はこの順番どおり毎日ローテーションします</li>
@@ -730,7 +812,7 @@
             <li><strong>設定の運用開始日</strong>の日に、1番の人がゴミ捨てからスタートします</li>
           </ul>
 
-          <h3>4. 休みの日（掃除なし）</h3>
+          <h3>6. 休みの日（掃除なし）</h3>
           <table class="guide-table">
             <thead><tr><th>日</th><th>表示</th><th>内容</th></tr></thead>
             <tbody>
@@ -740,12 +822,12 @@
             </tbody>
           </table>
 
-          <h3>5. Slack 通知</h3>
+          <h3>7. Slack 通知</h3>
           <p>毎朝、今日の掃除担当が Slack に届きます。届かない場合は管理者に連絡してください。</p>
 
-          <h3>6. 困ったとき</h3>
+          <h3>8. 困ったとき</h3>
           <ul>
-            <li>担当者の名前がおかしい → 管理者に <strong>社員・順番</strong> または <strong>運用開始日</strong> の確認を依頼</li>
+            <li>担当者の名前がおかしい → <strong>社員・順番</strong>の順番、<strong>休み設定</strong>、<strong>設定</strong>の運用開始日を確認</li>
             <li>画面が表示されない → ページを再読み込み（F5）、それでもダメなら管理者に連絡</li>
             <li>パスワードを忘れた → 管理者に連絡</li>
           </ul>
@@ -909,6 +991,14 @@
         await refresh();
         return;
       }
+      if (scope === 'staff-off' && action === 'del' && id) {
+        if (!state.staffOffsDbReady) { toast('休み設定は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        if (!confirm('この休みを削除しますか？')) return;
+        const { error } = await db.rpc('cleaning_remove_staff_off', { p_password: state.adminPw, p_id: id });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('削除しました'); await refresh();
+        return;
+      }
 
       if (scope === 'task' && action === 'edit' && id) {
         if (!state.tasksDbReady) { toast('掃除項目の編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
@@ -1011,6 +1101,20 @@
         sessionStorage.setItem('cleaning_admin', state.adminPw);
         toast('パスワードを変更しました');
         e.target.reset();
+      }
+      if (e.target.id === 'staff-off-form') {
+        e.preventDefault();
+        if (!state.staffOffsDbReady) { toast('休み設定は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        const fd = new FormData(e.target);
+        const { error } = await db.rpc('cleaning_add_staff_off', {
+          p_password: state.adminPw,
+          p_staff_id: fd.get('staff_id'),
+          p_off_date: fd.get('off_date'),
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('休みを登録しました');
+        e.target.reset();
+        await refresh();
       }
     });
 
