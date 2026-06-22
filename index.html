@@ -381,11 +381,20 @@
     function formatPrimarySkipText(skipReason) {
       return skipReasonLabel(skipReason) || '—';
     }
+    function normalizeSlackUserId(raw) {
+      if (!raw) return '';
+      let id = String(raw).trim();
+      const m = id.match(/^<@([^>]+)>$/);
+      if (m) id = m[1];
+      if (id.startsWith('@')) id = id.slice(1);
+      id = id.trim();
+      return /^U[A-Z0-9]+$/i.test(id) ? id : '';
+    }
     function formatSlackMention(staff) {
       if (!staff) return '—';
-      const id = (staff.slack_user_id || '').trim();
+      const id = normalizeSlackUserId(staff.slack_user_id);
       if (id) return `<@${id}>`;
-      return staff.name || '—';
+      return `@${staff.name || '—'}`;
     }
     function formatTrashTodayText(sched) {
       if (sched.primaryTodaySkipped) return formatPrimarySkipText(sched.primaryTodaySkipReason);
@@ -1104,7 +1113,12 @@
       }
 
       if (e.target.id === 'btn-test-slack') {
-        const { data, error } = await db.rpc('cleaning_test_slack', { p_password: state.adminPw });
+        const sched = calcSchedule(state.staff, getAnchor(), jstToday());
+        const msg = buildSlackMessage(sched);
+        const { data, error } = await db.rpc('cleaning_test_slack', {
+          p_password: state.adminPw,
+          p_message: msg,
+        });
         if (error) { toast(errMsg(error), 'error'); return; }
         if (!data?.ok) { toast(data?.error || '送信失敗', 'error'); return; }
         toast('Slack にテスト送信しました');

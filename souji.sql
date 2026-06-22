@@ -148,14 +148,36 @@ LANGUAGE sql IMMUTABLE AS $$
   END;
 $$;
 
+-- Slack メンバーID（U...）を正規化（<@U...> や @U... も可）
+CREATE OR REPLACE FUNCTION cleaning_normalize_slack_user_id(p_slack_user_id text)
+RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  v text;
+BEGIN
+  IF p_slack_user_id IS NULL THEN RETURN NULL; END IF;
+  v := trim(p_slack_user_id);
+  IF v = '' THEN RETURN NULL; END IF;
+  IF v ~ '^<@[^>]+>$' THEN
+    v := regexp_replace(v, '^<@([^>]+)>$', '\1');
+  END IF;
+  IF left(v, 1) = '@' THEN
+    v := substring(v from 2);
+  END IF;
+  v := trim(v);
+  IF v ~* '^U[A-Z0-9]+$' THEN RETURN v; END IF;
+  RETURN NULL;
+END;
+$$;
+
 -- ゴミ担当行のみ @ メンション（🗑️ 今日・明日のゴミ捨て行）
 CREATE OR REPLACE FUNCTION cleaning_slack_trash_mention(p_name text, p_slack_user_id text DEFAULT NULL)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
-    WHEN p_slack_user_id IS NOT NULL AND trim(p_slack_user_id) <> '' THEN
-      '<@' || trim(p_slack_user_id) || '>'
-    ELSE '@' || p_name
+    WHEN cleaning_normalize_slack_user_id(p_slack_user_id) IS NOT NULL THEN
+      '<@' || cleaning_normalize_slack_user_id(p_slack_user_id) || '>'
+    ELSE '@' || coalesce(nullif(trim(p_name), ''), '—')
   END;
 $$;
 
@@ -350,7 +372,7 @@ BEGIN
   VALUES (
     trim(p_name),
     NULLIF(trim(coalesce(p_mention_name, '')), ''),
-    NULLIF(trim(coalesce(p_slack_user_id, '')), ''),
+    cleaning_normalize_slack_user_id(p_slack_user_id),
     v_max
   )
   RETURNING cleaning_staff.id INTO v_id;
@@ -410,7 +432,7 @@ BEGIN
   UPDATE cleaning_staff SET
     name = trim(p_name),
     mention_name = NULLIF(trim(coalesce(p_mention_name, '')), ''),
-    slack_user_id = NULLIF(trim(coalesce(p_slack_user_id, '')), ''),
+    slack_user_id = cleaning_normalize_slack_user_id(p_slack_user_id),
     is_active = coalesce(p_is_active, is_active)
   WHERE id = p_id;
   IF NOT FOUND THEN
@@ -615,7 +637,11 @@ $$;
 -- ============================================================
 --  Slack 送信（Bot Token + チャンネルID）
 -- ============================================================
-CREATE OR REPLACE FUNCTION cleaning_send_slack(p_date date DEFAULT cleaning_jst_today())
+DROP FUNCTION IF EXISTS cleaning_send_slack(date);
+CREATE OR REPLACE FUNCTION cleaning_send_slack(
+  p_date date DEFAULT cleaning_jst_today(),
+  p_message text DEFAULT NULL
+)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public, extensions
@@ -649,7 +675,7 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'skipped', true, 'reason', 'off_day');
   END IF;
 
-  v_msg := cleaning_build_slack_message(p_date);
+  v_msg := coalesce(nullif(trim(p_message), ''), cleaning_build_slack_message(p_date));
 
   SELECT * INTO v_resp FROM extensions.http((
     'POST', 'https://slack.com/api/chat.postMessage',
@@ -684,7 +710,11 @@ $$;
 -- ============================================================
 --  RPC: テスト送信（管理者）
 -- ============================================================
-CREATE OR REPLACE FUNCTION cleaning_test_slack(p_password text)
+DROP FUNCTION IF EXISTS cleaning_test_slack(text);
+CREATE OR REPLACE FUNCTION cleaning_test_slack(
+  p_password text,
+  p_message text DEFAULT NULL
+)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public
@@ -693,7 +723,7 @@ BEGIN
   IF NOT cleaning_verify_admin(p_password) THEN
     RAISE EXCEPTION 'パスワードが正しくありません';
   END IF;
-  RETURN cleaning_send_slack(cleaning_jst_today());
+  RETURN cleaning_send_slack(cleaning_jst_today(), p_message);
 END;
 $$;
 
@@ -714,6 +744,7 @@ GRANT EXECUTE ON FUNCTION cleaning_schedule_for_date(date) TO anon, authenticate
 GRANT EXECUTE ON FUNCTION cleaning_build_slack_message(date) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_check_password(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_list_staff() TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_normalize_slack_user_id(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_slack_trash_mention(text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_add_staff(text, text, text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_update_staff(text, uuid, text, text, text, boolean) TO anon, authenticated;
