@@ -148,7 +148,7 @@ LANGUAGE sql IMMUTABLE AS $$
   END;
 $$;
 
--- ゴミ担当行のみ @ メンション（当番一覧は名前のみ）
+-- ゴミ担当行のみ @ メンション（🗑️ 今日・明日のゴミ捨て行）
 CREATE OR REPLACE FUNCTION cleaning_slack_trash_mention(p_name text, p_slack_user_id text DEFAULT NULL)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
@@ -600,14 +600,14 @@ BEGIN
   );
 
   IF cleaning_is_workday(p_date + 1) THEN
-    v_trash_tomorrow_label := '明日朝のゴミ箱回収担当は';
+    v_trash_tomorrow_label := '明日のゴミ捨て';
   ELSE
-    v_trash_tomorrow_label := '次回営業日朝のゴミ箱回収担当は';
+    v_trash_tomorrow_label := '次回営業日のゴミ捨て';
   END IF;
 
   RETURN '【本日掃除当番】' || v_lines || E'\n\n'
-    || '本日のゴミ捨て担当は' || v_trash_today || 'さんです。' || E'\n'
-    || v_trash_tomorrow_label || v_trash_tomorrow || 'さんです。' || E'\n'
+    || '🗑️ 今日のゴミ捨て: ' || v_trash_today || E'\n'
+    || '🗑️ ' || v_trash_tomorrow_label || ': ' || v_trash_tomorrow || E'\n'
     || 'よろしくおねがいいたします。';
 END;
 $$;

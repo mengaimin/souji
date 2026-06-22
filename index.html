@@ -13,7 +13,6 @@
       background: #f1f5f9;
       color: #1e293b;
     }
-    
     header {
       background: linear-gradient(135deg, #0f766e, #14b8a6);
       color: #fff;
@@ -36,7 +35,7 @@
       cursor: pointer;
     }
     .nav-btn:hover, .nav-btn.active { background: rgba(255,255,255,0.3); }
-    main { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+    main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
     .card {
       background: #fff;
       border-radius: 14px;
@@ -56,6 +55,8 @@
       border-radius: 10px;
       border: 1px solid #e2e8f0;
     }
+
+    
     .task-row.trash { border-left: 4px solid #f59e0b; background: #fffbeb; }
     .task-emoji { font-size: 22px; width: 32px; text-align: center; }
     .task-label { font-size: 14px; font-weight: 600; min-width: 100px; }
@@ -133,35 +134,41 @@
     }
     .login-bar { font-size: 12px; opacity: 0.9; }
     .week-day { font-size: 11px; color: #64748b; }
-    .calendar-wrap { overflow: auto; max-height: 75vh; border: 1px solid #e2e8f0; border-radius: 10px; }
-    .calendar-wrap table { font-size: 12px; min-width: 720px; }
-    .calendar-wrap th, .calendar-wrap td { padding: 7px 8px; white-space: nowrap; }
-    .calendar-wrap tr.today-row { background: #ecfdf5; }
-    .calendar-wrap tr.off-row { background: #f8fafc; color: #94a3b8; }
-    .calendar-wrap tr.off-row td { font-style: italic; }
-    .off-day-banner {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 16px;
-      font-size: 15px;
-      color: #64748b;
-      text-align: center;
+    .weekday { font-size: 12px; font-weight: 600; }
+    .weekday.sun, .weekday-holiday { color: #dc2626; }
+    .weekday.sat { color: #2563eb; }
+    .weekday.fri { color: #b45309; }
+    .cal-toolbar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
     }
-    .staff-item.on-leave { opacity: 0.65; background: #f8fafc; }
-    .staff-badge-leave {
-      display: inline-block; font-size: 10px; font-weight: 700;
-      color: #b45309; background: #fffbeb; border: 1px solid #fde68a;
-      border-radius: 6px; padding: 2px 6px; margin-left: 6px;
+    .cal-toolbar h2 { margin: 0; font-size: 18px; min-width: 140px; text-align: center; }
+    .cal-table-wrap { overflow-x: auto; margin-top: 8px; }
+    .cal-table-wrap table { font-size: 12px; }
+    .cal-table-wrap tr.today-row { background: #ecfdf5; }
+    .cal-table-wrap tr.fri-row { background: #fffbeb; }
+    .cal-table-wrap tr.weekend-row { background: #f8fafc; }
+    .date-cell-main { font-weight: 600; }
+    .date-cell-sub { font-size: 11px; color: #64748b; }
+    @media (max-width: 700px) {
+      .cal-table-wrap table { font-size: 11px; }
     }
     .preview-msg {
       background: #1e293b; color: #e2e8f0;
       border-radius: 10px; padding: 14px;
-      font-size: 13px; line-height: 1.7;
+      font-size: 13px; white-space: pre-wrap;
+      line-height: 1.7;
+      font-family: monospace;
     }
-    .preview-msg .name-highlight { color: #5eead4; font-weight: 700; }
-    .preview-msg .name-mention { background: rgba(94, 234, 212, 0.2); padding: 0 4px; border-radius: 4px; }
     .rule-list { font-size: 13px; color: #475569; line-height: 1.8; padding-left: 18px; }
+    .guide h3 { font-size: 14px; color: #0f766e; margin: 18px 0 8px; }
+    .guide h3:first-child { margin-top: 0; }
+    .guide p, .guide li { font-size: 13px; color: #475569; line-height: 1.75; }
+    .guide ul, .guide ol { margin: 0 0 12px; padding-left: 20px; }
+    .guide code { font-size: 12px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+    .guide-table { width: 100%; font-size: 12px; border-collapse: collapse; margin: 8px 0 12px; }
+    .guide-table th, .guide-table td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; }
+    .guide-table th { background: #f8fafc; color: #64748b; }
   </style>
 </head>
 
@@ -170,9 +177,11 @@
     <h1>🧹 会社掃除当番</h1>
     <nav>
       <button class="nav-btn active" data-page="home">今日の当番</button>
-      <button class="nav-btn" data-page="week">1か月</button>
+      <button class="nav-btn" data-page="calendar">カレンダー</button>
       <button class="nav-btn" data-page="staff">社員・順番</button>
+      <button class="nav-btn" data-page="tasks">掃除項目</button>
       <button class="nav-btn" data-page="settings">設定</button>
+      <button class="nav-btn" data-page="guide">使い方</button>
     </nav>
     <div class="login-bar" id="login-bar">
       <button class="nav-btn" id="btn-login">🔐 管理者ログイン</button>
@@ -188,24 +197,58 @@
 
   <script>
     // ★ Supabase の URL / anon key を設定（期間管理と同じプロジェクトでも可）
-    // URL = Dashboard「Project URL」 / Key = 公開可能な鍵（sb_publishable_...）または anon key
     const SUPABASE_URL = 'https://zffoaelhfskphgihbsll.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmZm9hZWxoZnNrcGhnaWhic2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxODk2MjMsImV4cCI6MjA5MTc2NTYyM30.VbH19CiSqOgRwS8jLCP9gZjphq8RWj72hKCWMaP4NJ4';
 
     const { createClient } = window.supabase;
+
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const TASKS = [
-      { key: 'trash', label: 'ゴミ捨て', emoji: '🗑️' },
-      { key: 'toilet', label: 'トイレ', emoji: '🚽' },
-      { key: 'floor', label: 'フロア', emoji: '🧹' },
-      { key: 'air', label: '空気清浄機', emoji: '💨' },
-      { key: 'kitchen', label: '給湯室', emoji: '☕' },
-    ];
     let state = {
-      staff: [], settings: null, holidays: new Set(), page: 'home',
+      staff: [], tasks: [], settings: null, holidays: new Set(), staffOffs: [],
+      page: 'home',
       adminPw: sessionStorage.getItem('cleaning_admin') || '',
+      tasksDbReady: false,
+      staffOffsDbReady: false,
+      staffSlackDbReady: false,
+      calendarMonth: null,
     };
+
+    const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
+
+    const DEFAULT_HOLIDAYS = new Set([
+      '2025-01-01', '2025-01-13', '2025-02-11', '2025-02-23', '2025-02-24', '2025-03-20',
+      '2025-04-29', '2025-05-03', '2025-05-04', '2025-05-05', '2025-05-06', '2025-07-21',
+      '2025-08-11', '2025-09-15', '2025-09-23', '2025-10-13', '2025-11-03', '2025-11-23', '2025-11-24',
+      '2026-01-01', '2026-01-12', '2026-02-11', '2026-02-23', '2026-03-20', '2026-04-29',
+      '2026-05-03', '2026-05-04', '2026-05-05', '2026-05-06', '2026-07-20', '2026-08-11',
+      '2026-09-21', '2026-09-22', '2026-09-23', '2026-10-12', '2026-11-03', '2026-11-23',
+      '2027-01-01', '2027-01-11', '2027-02-11', '2027-02-23', '2027-03-21', '2027-04-29',
+      '2027-05-03', '2027-05-04', '2027-05-05', '2027-07-19', '2027-08-11', '2027-09-20',
+      '2027-09-23', '2027-10-11', '2027-11-03', '2027-11-23',
+    ]);
+
+    const DEFAULT_TASKS = [
+      { id: null, label: 'ゴミ捨て', emoji: '🗑️', sort_order: 0, is_active: true, skip_friday: true },
+      { id: null, label: 'トイレ', emoji: '🚽', sort_order: 1, is_active: true, skip_friday: false },
+      { id: null, label: 'フロア', emoji: '🧹', sort_order: 2, is_active: true, skip_friday: false },
+      { id: null, label: '空気清浄機', emoji: '💨', sort_order: 3, is_active: true, skip_friday: false },
+      { id: null, label: '給湯室', emoji: '☕', sort_order: 4, is_active: true, skip_friday: false },
+    ];
+
+    function isTasksRpcMissing(err) {
+      const code = err?.code || '';
+      const msg = errMsg(err).toLowerCase();
+      return code === 'PGRST202' || code === '42883'
+        || msg.includes('404') || msg.includes('not found') || msg.includes('could not find');
+    }
+
+    function getActiveTasks() {
+      return [...state.tasks].filter(t => t.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+    }
+    function getPrimaryTask() {
+      return getActiveTasks()[0] || null;
+    }
 
     function jstToday() {
       return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
@@ -219,96 +262,212 @@
       const [y, m, d] = dateStr.split('-');
       return `${y}年${parseInt(m)}月${parseInt(d)}日`;
     }
+    function weekdayJa(dateStr) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      return WEEKDAYS_JA[new Date(Date.UTC(y, m - 1, d, 3, 0, 0)).getUTCDay()];
+    }
+    function weekdayClass(dateStr) {
+      const dow = (() => {
+        const [y, m, d] = dateStr.split('-').map(Number);
+        return new Date(Date.UTC(y, m - 1, d, 3, 0, 0)).getUTCDay();
+      })();
+      if (dow === 0) return 'sun';
+      if (dow === 5) return 'fri';
+      if (dow === 6) return 'sat';
+      return '';
+    }
+    function fmtDateJaWithWeekday(dateStr) {
+      return `${fmtDateJa(dateStr)}（${weekdayJa(dateStr)}）`;
+    }
+    function fmtDateShortWithWeekday(dateStr) {
+      const [, m, d] = dateStr.split('-');
+      return `${parseInt(m)}/${parseInt(d)}（${weekdayJa(dateStr)}）`;
+    }
+    function parseMonth(ym) {
+      const [y, m] = ym.split('-').map(Number);
+      return { year: y, month: m };
+    }
+    function fmtMonthJa(ym) {
+      const { year, month } = parseMonth(ym);
+      return `${year}年${month}月`;
+    }
+    function daysInMonth(ym) {
+      const { year, month } = parseMonth(ym);
+      return new Date(year, month, 0).getDate();
+    }
+    function addMonths(ym, delta) {
+      const { year, month } = parseMonth(ym);
+      const d = new Date(year, month - 1 + delta, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+    function dateFromYmd(year, month, day) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+    function getCalendarMonth() {
+      return state.calendarMonth || jstToday().slice(0, 7);
+    }
+    function showDayDetailModal(dateStr) {
+      const sched = calcSchedule(state.staff, getAnchor(), dateStr);
+      const isToday = dateStr === jstToday();
+      const tasks = getActiveTasks();
+      if (!tasks.length) {
+        openModal(fmtDateJaWithWeekday(dateStr), '<p class="empty">掃除項目未登録</p>');
+        return;
+      }
+      if (!sched.staffCount) {
+        openModal(fmtDateJaWithWeekday(dateStr), '<p class="empty">社員未登録</p>');
+        return;
+      }
+      const rows = sched.assignments.map((a, i) => `
+        <div class="task-row${i === 0 ? ' trash' : ''}" style="margin-bottom:8px">
+          <div class="task-emoji">${a.emoji}</div>
+          <div class="task-label">${a.label}</div>
+          <div class="task-name">${formatAssignee(a)}</div>
+        </div>`).join('');
+      const primary = sched.primaryTask;
+      openModal(`${isToday ? '📍 今日 · ' : ''}${fmtDateJaWithWeekday(dateStr)}`, `
+        <div class="task-grid">${rows}</div>
+        <div class="highlight-box" style="margin-top:12px">
+          <strong>${primary?.emoji || '📌'} ${primary?.label || '1番目'}（今日）:</strong>
+          ${sched.primaryTodaySkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTodaySkipReason)}</span>` : (sched.primaryToday?.name || '—')}<br>
+          <strong>${primary?.emoji || '📌'} ${primary?.label || '1番目'}（翌日）:</strong>
+          ${sched.primaryTomorrowSkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTomorrowSkipReason)}</span>` : (sched.primaryTomorrow?.name || '—')}
+        </div>
+        <div style="margin-top:14px;text-align:right">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">閉じる</button>
+        </div>`);
+    }
     function daysBetween(anchor, target) {
       const a = new Date(anchor + 'T12:00:00');
       const t = new Date(target + 'T12:00:00');
       return Math.round((t - a) / 86400000);
     }
-    function isWeekend(dateStr) {
+    function jstDayOfWeek(dateStr) {
       const [y, m, d] = dateStr.split('-').map(Number);
-      const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+      return new Date(Date.UTC(y, m - 1, d, 3, 0, 0)).getUTCDay();
+    }
+    function isWeekendDate(dateStr) {
+      const dow = jstDayOfWeek(dateStr);
       return dow === 0 || dow === 6;
     }
-    function isWorkday(dateStr) {
-      return !isWeekend(dateStr) && !state.holidays.has(dateStr);
+    function isFridayDate(dateStr) {
+      return jstDayOfWeek(dateStr) === 5;
     }
-    function offDayLabel(dateStr) {
-      if (isWeekend(dateStr)) return '土日';
-      if (state.holidays.has(dateStr)) return '祝日';
-      return '';
+    function isHolidayDate(dateStr) {
+      return state.holidays.has(dateStr);
     }
-    function workdaysSinceAnchor(anchor, target) {
-      let count = 0;
-      let d = anchor;
-      while (d <= target) {
-        if (isWorkday(d)) count++;
-        if (d === target) break;
-        d = addDays(d, 1);
-      }
-      return Math.max(0, count - 1);
+    function getTaskSkipReason(task, dateStr) {
+      if (isHolidayDate(dateStr)) return 'holiday';
+      if (isWeekendDate(dateStr)) return 'weekend';
+      if (task.skip_friday && isFridayDate(dateStr)) return 'friday';
+      return null;
     }
-    function nextWorkday(dateStr) {
-      let d = addDays(dateStr, 1);
-      while (!isWorkday(d)) d = addDays(d, 1);
-      return d;
+    function skipReasonLabel(reason) {
+      if (reason === 'holiday') return '祝日休';
+      if (reason === 'weekend') return '土日休';
+      if (reason === 'friday') return '金曜休';
+      return null;
+    }
+    function formatAssignee(assignment) {
+      const label = skipReasonLabel(assignment?.skipReason);
+      if (label) return `<span style="color:#94a3b8">${label}</span>`;
+      return assignment?.staff?.name || assignment?.name || '—';
+    }
+    function formatAssigneeText(assignment) {
+      const label = skipReasonLabel(assignment?.skipReason);
+      if (label) return label;
+      return assignment?.staff?.name || assignment?.name || '—';
+    }
+    function formatPrimarySkipText(skipReason) {
+      return skipReasonLabel(skipReason) || '—';
+    }
+    function formatSlackMention(staff) {
+      if (!staff) return '—';
+      const id = (staff.slack_user_id || '').trim();
+      if (id) return `<@${id}>`;
+      return staff.name || '—';
+    }
+    function formatTrashTodayText(sched) {
+      if (sched.primaryTodaySkipped) return formatPrimarySkipText(sched.primaryTodaySkipReason);
+      return formatSlackMention(sched.primaryToday);
+    }
+    function formatTrashTomorrowText(sched) {
+      if (sched.primaryTomorrowSkipped) return formatPrimarySkipText(sched.primaryTomorrowSkipReason);
+      return formatSlackMention(sched.primaryTomorrow);
     }
     function assigneeIndex(dayOffset, taskIndex, staffCount) {
       if (staffCount <= 0) return -1;
       return ((dayOffset - taskIndex) % staffCount + staffCount) % staffCount;
     }
-    function staffOnDuty(staff) {
-      return staff.filter(s => s.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+    function isStaffOffOnDate(staffId, dateStr) {
+      return state.staffOffs.some(o => o.staff_id === staffId && o.off_date === dateStr);
+    }
+    function resolveAssignee(active, dayOffset, taskIndex, dateStr) {
+      const N = active.length;
+      if (N <= 0) return { person: null, idx: -1 };
+      let idx = assigneeIndex(dayOffset, taskIndex, N);
+      for (let i = 0; i < N; i++) {
+        const person = active[idx];
+        if (!isStaffOffOnDate(person.id, dateStr)) return { person, idx };
+        idx = (idx + 1) % N;
+      }
+      return { person: null, idx: -1 };
     }
     function calcSchedule(staff, anchorDate, targetDate) {
-      const active = staffOnDuty(staff);
+      const active = staff.filter(s => s.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+      const tasks = getActiveTasks();
       const N = active.length;
-      if (!isWorkday(targetDate)) {
-        return {
-          date: targetDate, isOffDay: true, offLabel: offDayLabel(targetDate),
-          dayOffset: null, staffCount: N, assignments: [], trashToday: null, trashTomorrow: null,
-        };
-      }
-      const D = workdaysSinceAnchor(anchorDate, targetDate);
-      const assignments = TASKS.map((task, t) => {
-        const idx = assigneeIndex(D, t, N);
-        const person = idx >= 0 ? active[idx] : null;
-        return { ...task, taskIndex: t, staff: person, sortOrder: idx };
+      const D = daysBetween(anchorDate, targetDate);
+      const tomorrow = addDays(targetDate, 1);
+      const Dtomorrow = daysBetween(anchorDate, tomorrow);
+      const assignments = tasks.map((task, t) => {
+        const skipReason = getTaskSkipReason(task, targetDate);
+        const skipped = !!skipReason;
+        let idx = -1;
+        let person = null;
+        if (!skipped && N > 0) {
+          const resolved = resolveAssignee(active, D, t, targetDate);
+          idx = resolved.idx;
+          person = resolved.person;
+        }
+        return { ...task, taskIndex: t, staff: person, sortOrder: idx, skipped, skipReason };
       });
-      const trashToday = assignments[0]?.staff || null;
-      const nextWd = nextWorkday(targetDate);
-      const Dnext = workdaysSinceAnchor(anchorDate, nextWd);
-      const trashTomorrowIdx = assigneeIndex(Dnext, 0, N);
-      const trashTomorrow = trashTomorrowIdx >= 0 ? active[trashTomorrowIdx] : null;
-      const trashTomorrowIsNextCalDay = nextWd === addDays(targetDate, 1);
+      const primaryTask = tasks[0] || null;
+      const primaryTodaySkipReason = assignments[0]?.skipReason || null;
+      const primaryTomorrowSkipReason = primaryTask ? getTaskSkipReason(primaryTask, tomorrow) : null;
+      const primaryTodaySkipped = !!primaryTodaySkipReason;
+      const primaryTomorrowSkipped = !!primaryTomorrowSkipReason;
+      const primaryToday = assignments[0]?.staff || null;
+      let primaryTomorrow = null;
+      if (N > 0 && primaryTask && !primaryTomorrowSkipped) {
+        const resolved = resolveAssignee(active, Dtomorrow, 0, tomorrow);
+        primaryTomorrow = resolved.person;
+      }
       return {
-        date: targetDate, isOffDay: false, dayOffset: D, staffCount: N, assignments,
-        trashToday, trashTomorrow, trashTomorrowIsNextCalDay,
+        date: targetDate,
+        dayOffset: D,
+        staffCount: N,
+        taskCount: tasks.length,
+        assignments,
+        primaryTask,
+        primaryToday,
+        primaryTomorrow,
+        primaryTodaySkipped,
+        primaryTomorrowSkipped,
+        primaryTodaySkipReason,
+        primaryTomorrowSkipReason,
       };
     }
-    function buildSlackPreviewHtml(sched) {
-      if (sched.isOffDay) {
-        return '【本日掃除当番】本日は土日祝のため掃除当番はありません。';
-      }
-      const plainName = (staff) => escHtml(staff?.name || '—');
-      const mentionHtml = (staff) => {
-        const n = staff?.name || '—';
-        const cls = staff?.slack_user_id ? 'name-highlight name-mention' : 'name-highlight';
-        return `<span class="${cls}">@${escHtml(n)}</span>`;
-      };
-      const lines = sched.assignments.map(a =>
-        `${plainName(a.staff)}さん  → 「${escHtml(a.label)}」`
-      ).join('<br>');
-      const renderTrashLine = (prefix, staff) => {
-        const at = '@' + (staff?.name || '—');
-        return `${escHtml(prefix)}${mentionHtml(staff)}${escHtml('さんです。')}`;
-      };
-      const trashTomorrowPrefix = sched.trashTomorrowIsNextCalDay
-        ? '明日朝のゴミ箱回収担当は'
-        : '次回営業日朝のゴミ箱回収担当は';
-      return `【本日掃除当番】<br>${lines}<br><br>`
-        + `${renderTrashLine('本日のゴミ捨て担当は', sched.trashToday)}<br>`
-        + `${renderTrashLine(trashTomorrowPrefix, sched.trashTomorrow)}<br>`
-        + `よろしくおねがいいたします。`;
+    function buildSlackMessage(sched) {
+      const lines = sched.assignments.map(a => `${a.emoji} ${a.label}: ${formatAssigneeText(a)}`).join('\n');
+      const taskCount = sched.taskCount || sched.assignments.length;
+      const todayPrimary = formatTrashTodayText(sched);
+      const tomorrowPrimary = formatTrashTomorrowText(sched);
+      return `【掃除当番】${sched.date.replace(/-/g, '/')}\n\n`
+        + `■ 今日の${taskCount}つの掃除担当\n${lines}\n\n`
+        + `🗑️ 今日のゴミ捨て: ${todayPrimary}\n`
+        + `🗑️ 明日のゴミ捨て: ${tomorrowPrimary}\n\n`
+        + `よろしくお願いいたします。`;
     }
 
     function toast(msg, type = 'success') {
@@ -320,12 +479,6 @@
       setTimeout(() => t.remove(), 4000);
     }
     function errMsg(e) { return e?.message || String(e); }
-    function escAttr(s) {
-      return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    }
-    function escHtml(s) {
-      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
     function isAdmin() { return !!state.adminPw; }
     function openModal(title, html) {
       document.getElementById('modal-title').textContent = title;
@@ -334,59 +487,56 @@
     }
     function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
-    function openStaffModal(staff) {
-      const isEdit = !!staff;
-      openModal(isEdit ? '社員編集' : '社員追加', `
-        <form id="staff-form">
-          <div class="form-row"><label>表示名（当番表・通知一覧用）</label><input name="name" required placeholder="例: 小笠原" value="${escAttr(staff?.name)}"></div>
-          <div class="form-row"><label>Slack @用の名前（任意）</label><input name="mention_name" placeholder="例: 小笠原 将太（未入力なら表示名を使用）" value="${escAttr(staff?.mention_name || '')}"></div>
-          <div class="form-row">
-            <label>Slack メンバーID（任意・色付きメンション用）</label>
-            <input name="slack_user_id" placeholder="例: U0123456789" value="${escAttr(staff?.slack_user_id || '')}">
-            <p style="font-size:11px;color:#64748b;margin:6px 0 0">Slack プロフィール → ⋮ → メンバーIDをコピー</p>
-          </div>
-          ${isEdit ? `<div class="form-row"><label><input type="checkbox" name="on_leave" ${staff?.is_active === false ? 'checked' : ''}> 休み中（掃除当番から除外）</label></div>` : ''}
-          <div style="display:flex;gap:8px;margin-top:14px">
-            <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
-            <button type="submit" class="btn btn-primary">${isEdit ? '保存' : '追加'}</button>
-          </div>
-        </form>`);
-      document.getElementById('staff-form').onsubmit = async (ev) => {
-        ev.preventDefault();
-        const fd = new FormData(ev.target);
-        const payload = {
-          p_password: state.adminPw,
-          p_name: fd.get('name'),
-          p_mention_name: fd.get('mention_name') || null,
-          p_slack_user_id: fd.get('slack_user_id') || null,
-        };
-        const { error } = isEdit
-          ? await db.rpc('cleaning_update_staff', {
-            ...payload,
-            p_id: staff.id,
-            p_is_active: fd.get('on_leave') !== 'on',
-          })
-          : await db.rpc('cleaning_add_staff', payload);
-        if (error) { toast(errMsg(error), 'error'); return; }
-        closeModal();
-        toast(isEdit ? '保存しました' : '追加しました');
-        await refresh();
-      };
-    }
-
     async function loadData() {
-      const [{ data: staff, error: e1 }, { data: settingsRows, error: e2 }, { data: holidays, error: e3 }] = await Promise.all([
+      const [staffRes, settingsRes, tasksRes, holidaysRes, staffOffsRes] = await Promise.all([
         db.rpc('cleaning_list_staff'),
         db.rpc('cleaning_get_settings'),
+        db.rpc('cleaning_list_tasks'),
         db.rpc('cleaning_list_holidays'),
+        db.rpc('cleaning_list_staff_offs'),
       ]);
-      if (e1) throw e1;
-      if (e2) throw e2;
-      state.staff = staff || [];
-      state.settings = settingsRows?.[0] || { rotation_start_date: jstToday() };
-      state.holidays = e3
-        ? new Set()
-        : new Set((holidays || []).map(h => String(h.holiday_date).slice(0, 10)));
+      if (staffRes.error) throw staffRes.error;
+      if (settingsRes.error) throw settingsRes.error;
+
+      state.staff = staffRes.data || [];
+      state.staffSlackDbReady = !staffRes.error
+        && (state.staff.length === 0 || Object.prototype.hasOwnProperty.call(state.staff[0], 'slack_user_id'));
+      state.settings = settingsRes.data?.[0] || { rotation_start_date: jstToday() };
+
+      if (holidaysRes.error) {
+        state.holidays = new Set(DEFAULT_HOLIDAYS);
+      } else {
+        state.holidays = new Set((holidaysRes.data || []).map(h => h.holiday_date));
+        if (!state.holidays.size) state.holidays = new Set(DEFAULT_HOLIDAYS);
+      }
+
+      if (tasksRes.error) {
+        if (isTasksRpcMissing(tasksRes.error)) {
+          state.tasks = DEFAULT_TASKS;
+          state.tasksDbReady = false;
+        } else {
+          throw tasksRes.error;
+        }
+      } else {
+        state.tasks = (tasksRes.data || []).map(t => ({
+          ...t,
+          skip_friday: t.skip_friday === true
+            || (t.skip_friday == null && t.sort_order === 0 && t.label === 'ゴミ捨て'),
+        }));
+        state.tasksDbReady = true;
+      }
+
+      if (staffOffsRes.error) {
+        if (isTasksRpcMissing(staffOffsRes.error)) {
+          state.staffOffs = [];
+          state.staffOffsDbReady = false;
+        } else {
+          throw staffOffsRes.error;
+        }
+      } else {
+        state.staffOffs = staffOffsRes.data || [];
+        state.staffOffsDbReady = true;
+      }
     }
 
     function getAnchor() { return state.settings?.rotation_start_date || jstToday(); }
@@ -394,114 +544,123 @@
     function renderHome() {
       const today = jstToday();
       const sched = calcSchedule(state.staff, getAnchor(), today);
+      const tasks = getActiveTasks();
+      if (!tasks.length) {
+        return `<div class="card"><p class="empty">掃除項目が登録されていません。<br>「掃除項目」から登録してください。</p></div>`;
+      }
       if (!sched.staffCount) {
         return `<div class="card"><p class="empty">社員が登録されていません。<br>「社員・順番」から登録してください。</p></div>`;
       }
-      if (sched.isOffDay) {
-        return `
-        <div class="card">
-          <h2>📅 今日の当番（${fmtDateJa(today)}）</h2>
-          <div class="off-day-banner">本日は<strong>${escHtml(sched.offLabel)}</strong>のため、掃除当番はありません。</div>
-        </div>
-        <div class="card">
-          <h2>💬 Slack 通知プレビュー</h2>
-          <div class="preview-msg">${buildSlackPreviewHtml(sched)}</div>
-          <p style="font-size:11px;color:#64748b;margin:10px 0 0">土日祝は Slack 通知も送信されません。</p>
-        </div>
-        <div class="card">
-          <h2>📋 ローテーションのルール</h2>
-          <ul class="rule-list">
-            <li>社員を登録し、<strong>当番順（1番・2番…）</strong>を決めます</li>
-            <li><strong>平日（土日祝除く）</strong>のみ掃除当番が回ります</li>
-            <li><strong>ゴミ捨て</strong>は営業日ごとにローテーション（1番→2番→3番→…→1番）</li>
-            <li>今日ゴミ捨ての人は、<strong>次の営業日トイレ → その次フロア → 空気清浄機 → 給湯室</strong>と進みます</li>
-            <li>平日の朝に Slack で通知します</li>
-          </ul>
-        </div>`;
-      }
-      const rows = sched.assignments.map(a => `
-        <div class="task-row${a.key === 'trash' ? ' trash' : ''}">
+      const primary = sched.primaryTask;
+      const rows = sched.assignments.map((a, i) => `
+        <div class="task-row${i === 0 ? ' trash' : ''}">
           <div class="task-emoji">${a.emoji}</div>
           <div class="task-label">${a.label}</div>
-          <div class="task-name">${a.staff?.name || '—'}</div>
+          <div class="task-name">${formatAssignee(a)}</div>
         </div>`).join('');
-      const preview = buildSlackPreviewHtml(sched);
+      const preview = buildSlackMessage(sched);
       return `
         <div class="card">
-          <h2>📅 今日の当番（${fmtDateJa(today)}）</h2>
+          <h2>📅 今日の当番（${fmtDateJaWithWeekday(today)}）</h2>
           <div class="task-grid">${rows}</div>
           <div class="highlight-box">
-            <strong>🗑️ 今日のゴミ捨て:</strong> ${sched.trashToday?.name || '—'}<br>
-            <strong>🗑️ 明日のゴミ回収:</strong> ${sched.trashTomorrow?.name || '—'}
+            <strong>🗑️ 今日のゴミ捨て:</strong> ${sched.primaryTodaySkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTodaySkipReason)}</span>` : formatSlackMention(sched.primaryToday).replace(/</g, '&lt;')}<br>
+            <strong>🗑️ 明日のゴミ捨て:</strong> ${sched.primaryTomorrowSkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTomorrowSkipReason)}</span>` : formatSlackMention(sched.primaryTomorrow).replace(/</g, '&lt;')}
           </div>
         </div>
         <div class="card">
           <h2>💬 Slack 通知プレビュー</h2>
-          <div class="preview-msg">${preview}</div>
+          <div class="preview-msg">${preview.replace(/</g, '&lt;')}</div>
         </div>
         <div class="card">
           <h2>📋 ローテーションのルール</h2>
           <ul class="rule-list">
             <li>社員を登録し、<strong>当番順（1番・2番…）</strong>を決めます</li>
-            <li><strong>平日（土日祝除く）</strong>のみ掃除当番が回ります</li>
-            <li><strong>ゴミ捨て</strong>は営業日ごとにローテーション（1番→2番→3番→…→1番）</li>
-            <li>今日ゴミ捨ての人は、<strong>次の営業日トイレ → その次フロア → 空気清浄機 → 給湯室</strong>と進みます</li>
-            <li>平日の朝に Slack で通知します</li>
+            <li>掃除当番は<strong>平日のみ</strong>（<strong>土日・祝日は休み</strong>、ゴミ捨ては<strong>金曜も休み</strong>）</li>
+            <li>今日1番目の人は、<strong>翌平日に2番目 → その翌日3番目…</strong>と各項目を順に担当します</li>
+            <li>毎朝 Slack に今日の担当一覧と1番目項目の情報を通知します</li>
           </ul>
         </div>`;
     }
 
-    function renderWeek() {
+    function renderCalendar() {
+      const ym = getCalendarMonth();
       const today = jstToday();
-      const end = addDays(today, 30);
-      let html = `<div class="card"><h2>📆 今後1か月の当番表</h2>
-        <p style="font-size:12px;color:#64748b;margin:0 0 12px">${fmtDateJa(today)} 〜 ${fmtDateJa(end)}（土日祝・休み中の社員は当番なし）</p>
-        <div class="calendar-wrap"><table>
-        <thead><tr><th>日付</th>${TASKS.map(t => `<th>${t.emoji} ${t.label}</th>`).join('')}<th>🗑️翌日</th></tr></thead><tbody>`;
-      for (let i = 0; i <= 30; i++) {
-        const d = addDays(today, i);
+      const tasks = getActiveTasks();
+      const primary = tasks[0];
+      const { year, month } = parseMonth(ym);
+      const dim = daysInMonth(ym);
+      const colSpan = Math.max(tasks.length + 1, 2);
+
+      let tableHtml = `<div class="cal-table-wrap"><table>
+        <thead><tr>
+          <th>日付（曜日）</th>
+          ${tasks.map(t => `<th>${t.emoji} ${t.label}</th>`).join('')}
+          <th>${primary ? primary.emoji + '翌日' : '翌日'}</th>
+        </tr></thead><tbody>`;
+
+      for (let day = 1; day <= dim; day++) {
+        const d = dateFromYmd(year, month, day);
+        const isToday = d === today;
+        const wdCls = weekdayClass(d);
         const s = calcSchedule(state.staff, getAnchor(), d);
-        const label = i === 0 ? `<strong>今日</strong><br><span class="week-day">${fmtDateJa(d)}</span>`
-          : `<span class="week-day">${fmtDateJa(d)}</span>`;
-        const rowCls = i === 0 ? ' class="today-row"' : '';
+        const rowCls = `${isToday ? 'today-row' : ''}${wdCls === 'fri' ? ' fri-row' : ''}${isWeekendDate(d) || isHolidayDate(d) ? ' weekend-row' : ''}`.trim();
+        if (!tasks.length) {
+          tableHtml += `<tr class="${rowCls}"><td>${fmtDateCell(d, isToday)}</td><td colspan="${colSpan}" class="empty">掃除項目未登録</td></tr>`;
+          continue;
+        }
         if (!s.staffCount) {
-          html += `<tr${rowCls}><td>${label}</td><td colspan="6" class="empty">当番対象の社員がいません</td></tr>`;
+          tableHtml += `<tr class="${rowCls}"><td>${fmtDateCell(d, isToday)}</td><td colspan="${colSpan}" class="empty">社員未登録</td></tr>`;
           continue;
         }
-        if (s.isOffDay) {
-          html += `<tr${rowCls} class="off-row"><td>${label}</td><td colspan="6">休（${escHtml(s.offLabel)}）</td></tr>`;
-          continue;
-        }
-        html += `<tr${rowCls}><td>${label}</td>`
-          + s.assignments.map(a => `<td>${escHtml(a.staff?.name || '—')}</td>`).join('')
-          + `<td style="color:#b45309;font-weight:600">${escHtml(s.trashTomorrow?.name || '—')}</td></tr>`;
+        tableHtml += `<tr class="${rowCls}" data-cal-date="${d}" style="cursor:pointer">
+          <td>${fmtDateCell(d, isToday)}</td>`
+          + s.assignments.map(a => `<td>${a.skipReason ? `<span style="color:#94a3b8">${skipReasonLabel(a.skipReason)}</span>` : (a.staff?.name || '—')}</td>`).join('')
+          + `<td style="color:#b45309;font-weight:600">${s.primaryTomorrowSkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(s.primaryTomorrowSkipReason)}</span>` : (s.primaryTomorrow?.name || '—')}</td></tr>`;
       }
-      html += '</tbody></table></div></div>';
-      return html;
+      tableHtml += '</tbody></table></div>';
+
+      return `
+        <div class="card">
+          <div class="cal-toolbar">
+            <button class="btn btn-secondary" data-cal-action="prev">◀ 前月</button>
+            <h2>📅 ${fmtMonthJa(ym)}</h2>
+            <button class="btn btn-secondary" data-cal-action="next">翌月 ▶</button>
+            <button class="btn btn-primary" data-cal-action="today">今月</button>
+          </div>
+          <h2 style="margin:16px 0 10px;font-size:16px;color:#0f766e">📋 全日程一覧</h2>
+          ${tableHtml}
+          <p style="font-size:12px;color:#64748b;margin:12px 0 0">行をクリックするとその日の詳細を表示します。</p>
+        </div>`;
+    }
+
+    function fmtDateCell(dateStr, isToday) {
+      const wdCls = weekdayClass(dateStr);
+      return `<div class="date-cell-main">${isToday ? '<span style="color:#0f766e">今日 · </span>' : ''}${fmtDateJaWithWeekday(dateStr)}</div>
+        <div class="date-cell-sub weekday ${wdCls}">${weekdayJa(dateStr)}曜日</div>`;
     }
 
     function renderStaff() {
       const sorted = [...state.staff].sort((a, b) => a.sort_order - b.sort_order);
       const items = sorted.map((s, i) => `
-        <div class="staff-item${s.is_active === false ? ' on-leave' : ''}" data-id="${s.id}">
+        <div class="staff-item" data-id="${s.id}">
           <div class="staff-order">${i + 1}</div>
-          <div class="staff-name">
-            ${escHtml(s.name)}${s.is_active === false ? '<span class="staff-badge-leave">休み</span>' : ''}
-            ${s.mention_name && s.mention_name !== s.name
-              ? `<span style="display:block;font-size:11px;color:#64748b;font-weight:400">Slack @: ${escHtml(s.mention_name)}</span>`
-              : ''}
-            ${s.slack_user_id
-              ? `<span style="display:block;font-size:11px;color:#0f766e;font-weight:400">ID: ${escHtml(s.slack_user_id)}</span>`
-              : ''}
-          </div>
+          <div class="staff-name">${s.name}${s.slack_user_id ? `<div style="font-size:10px;color:#64748b;font-weight:400">Slack: ${s.slack_user_id}</div>` : ''}</div>
           ${isAdmin() ? `
-            <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${s.id}">編集</button>
-            <button class="btn btn-secondary btn-sm" data-action="leave" data-id="${s.id}">${s.is_active === false ? '復帰' : '休み'}</button>
-            <button class="btn btn-secondary btn-sm" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
-            <button class="btn btn-secondary btn-sm" data-action="down" data-id="${s.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
-            <button class="btn btn-danger btn-sm" data-action="del" data-id="${s.id}">削除</button>
+            <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="edit" data-id="${s.id}">編集</button>
+            <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="down" data-id="${s.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="btn btn-danger btn-sm" data-scope="staff" data-action="del" data-id="${s.id}">削除</button>
           ` : ''}
         </div>`).join('');
+      const offs = [...state.staffOffs].sort((a, b) => a.off_date.localeCompare(b.off_date) || (a.staff_name || '').localeCompare(b.staff_name || ''));
+      const offRows = offs.map(o => `
+        <tr>
+          <td>${fmtDateJaWithWeekday(o.off_date)}</td>
+          <td>${o.staff_name || '—'}</td>
+          <td>${isAdmin() && state.staffOffsDbReady ? `<button class="btn btn-danger btn-sm" data-scope="staff-off" data-action="del" data-id="${o.id}">削除</button>` : ''}</td>
+        </tr>`).join('');
+      const staffOptions = sorted.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
       return `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -509,6 +668,60 @@
             ${isAdmin() ? '<button class="btn btn-primary" id="btn-add-staff">＋ 社員追加</button>' : ''}
           </div>
           ${items || '<p class="empty">社員がいません</p>'}
+          ${isAdmin() && state.staffSlackDbReady ? '<p style="font-size:12px;color:#64748b;margin:12px 0 0">Slack ID（U〜）を登録すると、ゴミ捨て担当が @通知されます。</p>' : ''}
+          ${!isAdmin() ? '<p style="font-size:12px;color:#94a3b8;margin-top:12px">編集するには管理者ログインが必要です</p>' : ''}
+        </div>
+        <div class="card">
+          <h2 style="margin:0 0 12px">📅 休み設定</h2>
+          ${!state.staffOffsDbReady ? `<p style="font-size:13px;color:#b45309;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin:0 0 12px">
+            休み設定は現在使えません。管理者にお問い合わせください。
+          </p>` : ''}
+          <p style="font-size:12px;color:#64748b;margin:0 0 12px">休みの日は、その日の当番を次の人に振り替えます。</p>
+          ${isAdmin() && state.staffOffsDbReady && sorted.length ? `
+            <form id="staff-off-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
+              <div class="form-row" style="margin:0;min-width:140px">
+                <label>社員</label>
+                <select name="staff_id" required>${staffOptions}</select>
+              </div>
+              <div class="form-row" style="margin:0">
+                <label>休みの日</label>
+                <input type="date" name="off_date" required>
+              </div>
+              <button type="submit" class="btn btn-primary">登録</button>
+            </form>
+          ` : ''}
+          ${offRows ? `<div class="cal-table-wrap"><table>
+            <thead><tr><th>日付</th><th>社員</th><th></th></tr></thead>
+            <tbody>${offRows}</tbody>
+          </table></div>` : '<p class="empty">休みの登録はありません</p>'}
+        </div>`;
+    }
+
+    function renderTasks() {
+      const sorted = getActiveTasks();
+      const items = sorted.map((t, i) => `
+        <div class="staff-item" data-id="${t.id}">
+          <div class="staff-order">${i + 1}${i === 0 ? '<span style="font-size:9px;display:block;color:#b45309">起点</span>' : ''}</div>
+          <div class="task-emoji" style="font-size:22px;width:32px;text-align:center">${t.emoji}</div>
+          <div class="staff-name">${t.label}</div>
+          ${isAdmin() && state.tasksDbReady ? `
+            <button class="btn btn-secondary btn-sm" data-scope="task" data-action="edit" data-id="${t.id}">編集</button>
+            <button class="btn btn-secondary btn-sm" data-scope="task" data-action="up" data-id="${t.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="btn btn-secondary btn-sm" data-scope="task" data-action="down" data-id="${t.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="btn btn-danger btn-sm" data-scope="task" data-action="del" data-id="${t.id}" ${sorted.length <= 1 ? 'disabled' : ''}>削除</button>
+          ` : ''}
+        </div>`).join('');
+      return `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <h2 style="margin:0">🧹 掃除項目</h2>
+            ${isAdmin() && state.tasksDbReady ? '<button class="btn btn-primary" id="btn-add-task">＋ 項目追加</button>' : ''}
+          </div>
+          ${!state.tasksDbReady ? `<p style="font-size:13px;color:#b45309;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin:0 0 12px">
+            掃除項目の編集機能は現在使えません。管理者にお問い合わせください。
+          </p>` : ''}
+          <p style="font-size:12px;color:#64748b;margin:0 0 12px">1番目の項目がローテーション起点です。土日・祝日は全項目休み、ゴミ捨ては金曜も休み。</p>
+          ${items || '<p class="empty">項目がありません</p>'}
           ${!isAdmin() ? '<p style="font-size:12px;color:#94a3b8;margin-top:12px">編集するには管理者ログインが必要です</p>' : ''}
         </div>`;
     }
@@ -521,7 +734,7 @@
           <h2>⚙️ 基本設定</h2>
           <form id="settings-form">
             <div class="form-row">
-              <label>ローテーション起点日（この日に1番がゴミ捨て）</label>
+              <label>ローテーション起点日（運用開始日・この日に1番がゴミ捨て）</label>
               <input type="date" name="rotation_start_date" value="${s.rotation_start_date || jstToday()}" required>
             </div>
             <p style="font-size:12px;color:#64748b;margin:0 0 14px">起点日を変えると当番表が再計算されます。運用開始日に合わせてください。</p>
@@ -544,15 +757,9 @@
         `<option value="${h}"${(s.cron_hour_jst ?? 9) === h ? ' selected' : ''}>${h}:00</option>`).join('')}</select>
               </div>
               <div class="form-row">
-                <label>チャンネルID</label>
-                <input name="slack_channel_id" placeholder="例: C0123456789" value="${escAttr(s.slack_channel_id || '')}" required>
-                <p style="font-size:11px;color:#64748b;margin:6px 0 0">チャンネル詳細（ℹ️）→ 最下部の ID（C... 公開 / G... 非公開）。Bot Token と<strong>同じワークスペース</strong>の ID。共有チャンネルは Bot を <code>/invite @App名</code></p>
+                <label>Webhook URL${s.slack_webhook_masked ? `（登録済: ${s.slack_webhook_masked}）` : ''}</label>
+                <input type="url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
               </div>
-            </div>
-            <div class="form-row">
-              <label>Bot Token（xoxb-...）${s.slack_bot_token_masked ? `（登録済: ${s.slack_bot_token_masked}）` : ''}</label>
-              <input type="password" name="slack_bot_token" placeholder="xoxb-..." autocomplete="off">
-              <p style="font-size:11px;color:#64748b;margin:6px 0 0">Slack App → OAuth &amp; Permissions → <strong>Bot Token Scopes</strong> に <code>chat:write</code> を追加（<code>incoming-webhook</code> だけでは不可）→ <strong>Reinstall to Workspace</strong> → 新しい <strong>Bot User OAuth Token</strong>（xoxb-...）を保存</p>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
               <button type="submit" class="btn btn-primary">Slack 設定を保存</button>
@@ -571,15 +778,94 @@
         </div>`;
     }
 
+    function renderGuide() {
+      return `
+        <div class="card guide">
+          <h2>📖 使い方</h2>
+          <p>社員の当番順に基づき、掃除の担当者が自動で決まり、毎朝 Slack にも通知されます。</p>
+
+          <h3>1. 今日の担当を見る</h3>
+          <ul>
+            <li><strong>今日の当番</strong> … 本日の掃除担当者を確認できます</li>
+            <li><strong>カレンダー</strong> … 月ごとの予定表を見られます（行をクリックすると詳細）</li>
+            <li>◀ 前月 / 翌月 ▶ / 今月 で月を切り替えられます</li>
+          </ul>
+
+          <h3>2. 管理者の操作（ログインが必要）</h3>
+          <p>画面右上の <strong>🔐 管理者ログイン</strong> から入ります。パスワードは担当者にお聞きください。</p>
+          <table class="guide-table">
+            <thead><tr><th>メニュー</th><th>できること</th></tr></thead>
+            <tbody>
+              <tr><td>社員・順番</td><td>メンバーの追加・削除、当番順の変更、休みの登録</td></tr>
+              <tr><td>掃除項目</td><td>ゴミ捨て・トイレなどの項目の追加・編集・順番変更</td></tr>
+              <tr><td>設定</td><td>運用開始日、Slack 通知の時刻、パスワードの変更</td></tr>
+            </tbody>
+          </table>
+
+          <h3>3. 社員・順番の操作</h3>
+          <p><strong>社員・順番</strong>タブで、当番に入るメンバーを管理します。</p>
+          <ul>
+            <li><strong>＋ 社員追加</strong> … 新しいメンバーを登録します</li>
+            <li><strong>編集</strong> … 名前と <strong>Slack ID</strong>（U〜）を設定します。Slack ID がある人はゴミ捨て担当で @通知されます</li>
+            <li><strong>↑ ↓</strong> … 当番順（1番・2番・3番…）を入れ替えます。上にあるほど先に当番です</li>
+            <li><strong>削除</strong> … 退職などで当番から外すときに使います</li>
+          </ul>
+          <p><strong>休み設定</strong>（同じタブの下の方）</p>
+          <ul>
+            <li>社員と日付を選んで <strong>登録</strong> … その日は休みとして、当番を次の人に振り替えます</li>
+            <li>一覧の <strong>削除</strong> … 登録した休みを取り消します</li>
+          </ul>
+
+          <h3>4. 掃除項目の操作</h3>
+          <p><strong>掃除項目</strong>タブで、掃除の種類（ゴミ捨て・トイレなど）を管理します。</p>
+          <ul>
+            <li><strong>＋ 項目追加</strong> … 新しい掃除項目を追加します</li>
+            <li><strong>編集</strong> … 名前や絵文字を変更します</li>
+            <li><strong>↑ ↓</strong> … 項目の順番を変更します。<strong>1番目がローテーションの起点</strong>です（通常はゴミ捨て）</li>
+            <li><strong>削除</strong> … 不要になった項目を削除します（最低1つは残ります）</li>
+          </ul>
+
+          <h3>5. 当番の決まり方</h3>
+          <ul>
+            <li>社員は <strong>1番 → 2番 → 3番…</strong> の順で交代します</li>
+            <li><strong>ゴミ捨て</strong>はこの順番どおり毎日ローテーションします</li>
+            <li>今日ゴミ捨ての人は、次の営業日にトイレ → その次にフロア…と進みます</li>
+            <li><strong>設定の運用開始日</strong>の日に、1番の人がゴミ捨てからスタートします</li>
+          </ul>
+
+          <h3>6. 休みの日（掃除なし）</h3>
+          <table class="guide-table">
+            <thead><tr><th>日</th><th>表示</th><th>内容</th></tr></thead>
+            <tbody>
+              <tr><td>土・日</td><td>土日休</td><td>すべて休み</td></tr>
+              <tr><td>祝日</td><td>祝日休</td><td>すべて休み</td></tr>
+              <tr><td>金曜</td><td>金曜休</td><td>ゴミ捨てのみ休み</td></tr>
+            </tbody>
+          </table>
+
+          <h3>7. Slack 通知</h3>
+          <p>毎朝、今日の掃除担当が Slack に届きます。届かない場合は管理者に連絡してください。</p>
+
+          <h3>8. 困ったとき</h3>
+          <ul>
+            <li>担当者の名前がおかしい → <strong>社員・順番</strong>の順番、<strong>休み設定</strong>、<strong>設定</strong>の運用開始日を確認</li>
+            <li>画面が表示されない → ページを再読み込み（F5）、それでもダメなら管理者に連絡</li>
+            <li>パスワードを忘れた → 管理者に連絡</li>
+          </ul>
+        </div>`;
+    }
+
     function render() {
       document.querySelectorAll('.nav-btn[data-page]').forEach(b => {
         b.classList.toggle('active', b.dataset.page === state.page);
       });
       const el = document.getElementById('content');
       if (state.page === 'home') el.innerHTML = renderHome();
-      else if (state.page === 'week') el.innerHTML = renderWeek();
+      else if (state.page === 'calendar') el.innerHTML = renderCalendar();
       else if (state.page === 'staff') el.innerHTML = renderStaff();
+      else if (state.page === 'tasks') el.innerHTML = renderTasks();
       else if (state.page === 'settings') el.innerHTML = renderSettings();
+      else if (state.page === 'guide') el.innerHTML = renderGuide();
       updateLoginBar();
     }
 
@@ -596,7 +882,7 @@
       openModal('管理者ログイン', `
         <form id="login-form">
           <div class="form-row"><label>パスワード</label><input type="password" name="password" required autofocus></div>
-          <p style="font-size:11px;color:#94a3b8">初期: Admin1234（初回ログイン後に変更推奨）</p>
+          <p style="font-size:11px;color:#94a3b8">パスワードは管理者にお問い合わせください</p>
           <div style="display:flex;gap:8px;margin-top:14px">
             <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
             <button type="submit" class="btn btn-primary">ログイン</button>
@@ -620,13 +906,34 @@
         await loadData();
         render();
       } catch (e) {
-        document.getElementById('content').innerHTML = `<div class="card"><p style="color:#dc2626">読み込みエラー: ${errMsg(e)}<br><small>souji.sql を Supabase で実行し、URL/Key を設定してください</small></p></div>`;
+        document.getElementById('content').innerHTML = `<div class="card"><p style="color:#dc2626">読み込みエラー: ${errMsg(e)}<br><small>ページを再読み込みするか、管理者にお問い合わせください</small></p></div>`;
       }
     }
 
     document.addEventListener('click', async (e) => {
       const page = e.target.closest('[data-page]')?.dataset?.page;
-      if (page) { state.page = page; render(); return; }
+      if (page) {
+        state.page = page;
+        if (page === 'calendar' && !state.calendarMonth) state.calendarMonth = jstToday().slice(0, 7);
+        render();
+        return;
+      }
+
+      const calAction = e.target.dataset.calAction;
+      if (calAction) {
+        const ym = getCalendarMonth();
+        if (calAction === 'prev') state.calendarMonth = addMonths(ym, -1);
+        else if (calAction === 'next') state.calendarMonth = addMonths(ym, 1);
+        else if (calAction === 'today') state.calendarMonth = jstToday().slice(0, 7);
+        render();
+        return;
+      }
+
+      const calDate = e.target.closest('[data-cal-date]')?.dataset?.calDate;
+      if (calDate) {
+        showDayDetailModal(calDate);
+        return;
+      }
 
       if (e.target.id === 'btn-login') { showLoginModal(); return; }
       if (e.target.id === 'btn-logout') {
@@ -637,37 +944,90 @@
         return;
       }
       if (e.target.id === 'btn-add-staff') {
-        openStaffModal(null);
+        openModal('社員追加', `
+          <form id="add-staff-form">
+            <div class="form-row"><label>名前</label><input name="name" required placeholder="例: 田中太郎"></div>
+            ${state.staffSlackDbReady ? `<div class="form-row"><label>Slack ID（@通知用・任意）</label><input name="slack_user_id" placeholder="U0123456789"><p style="font-size:11px;color:#64748b;margin:4px 0 0">Slackのプロフィール → メンバーID（Uで始まる）</p></div>` : ''}
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+              <button type="submit" class="btn btn-primary">追加</button>
+            </div>
+          </form>`);
+        document.getElementById('add-staff-form').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const fd = new FormData(ev.target);
+          const params = { p_password: state.adminPw, p_name: fd.get('name') };
+          if (state.staffSlackDbReady) params.p_slack_user_id = fd.get('slack_user_id') || null;
+          const { error } = await db.rpc('cleaning_add_staff', params);
+          if (error) { toast(errMsg(error), 'error'); return; }
+          closeModal(); toast('追加しました'); await refresh();
+        };
+        return;
+      }
+      if (e.target.id === 'btn-add-task') {
+        if (!state.tasksDbReady) { toast('掃除項目の編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        openModal('掃除項目追加', `
+          <form id="add-task-form">
+            <div class="form-row"><label>項目名</label><input name="label" required placeholder="例: 会議室"></div>
+            <div class="form-row"><label>絵文字</label><input name="emoji" placeholder="🧹" maxlength="4"></div>
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+              <button type="submit" class="btn btn-primary">追加</button>
+            </div>
+          </form>`);
+        document.getElementById('add-task-form').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const fd = new FormData(ev.target);
+          const { error } = await db.rpc('cleaning_add_task', {
+            p_password: state.adminPw,
+            p_label: fd.get('label'),
+            p_emoji: fd.get('emoji') || '🧹',
+          });
+          if (error) { toast(errMsg(error), 'error'); return; }
+          closeModal(); toast('追加しました'); await refresh();
+        };
         return;
       }
 
+      const scope = e.target.dataset.scope;
       const action = e.target.dataset.action;
       const id = e.target.dataset.id;
-      if (action === 'edit' && id) {
-        const staff = state.staff.find(s => s.id === id);
-        if (staff) openStaffModal(staff);
-        return;
-      }
-      if (action === 'leave' && id) {
-        const staff = state.staff.find(s => s.id === id);
-        const goingLeave = staff?.is_active !== false;
-        const { error } = await db.rpc('cleaning_toggle_staff_leave', {
-          p_password: state.adminPw,
-          p_id: id,
-        });
-        if (error) { toast(errMsg(error), 'error'); return; }
-        toast(goingLeave ? '休みに設定しました' : '復帰しました');
-        await refresh();
-        return;
-      }
-      if (action === 'del' && id) {
+
+      if (scope === 'staff' && action === 'del' && id) {
         if (!confirm('この社員を削除しますか？')) return;
         const { error } = await db.rpc('cleaning_delete_staff', { p_password: state.adminPw, p_id: id });
         if (error) { toast(errMsg(error), 'error'); return; }
         toast('削除しました'); await refresh();
         return;
       }
-      if ((action === 'up' || action === 'down') && id) {
+      if (scope === 'staff' && action === 'edit' && id) {
+        if (!state.staffSlackDbReady) { toast('社員編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        const staff = state.staff.find(s => s.id === id);
+        if (!staff) return;
+        openModal('社員編集', `
+          <form id="edit-staff-form">
+            <div class="form-row"><label>名前</label><input name="name" required value="${staff.name.replace(/"/g, '&quot;')}"></div>
+            <div class="form-row"><label>Slack ID（@通知用・任意）</label><input name="slack_user_id" value="${(staff.slack_user_id || '').replace(/"/g, '&quot;')}" placeholder="U0123456789"></div>
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>`);
+        document.getElementById('edit-staff-form').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const fd = new FormData(ev.target);
+          const { error } = await db.rpc('cleaning_update_staff', {
+            p_password: state.adminPw,
+            p_id: id,
+            p_name: fd.get('name'),
+            p_slack_user_id: fd.get('slack_user_id') || null,
+          });
+          if (error) { toast(errMsg(error), 'error'); return; }
+          closeModal(); toast('保存しました'); await refresh();
+        };
+        return;
+      }
+      if (scope === 'staff' && (action === 'up' || action === 'down') && id) {
         const sorted = [...state.staff].sort((a, b) => a.sort_order - b.sort_order);
         const idx = sorted.findIndex(s => s.id === id);
         if (idx < 0) return;
@@ -680,28 +1040,73 @@
         });
         if (error) { toast(errMsg(error), 'error'); return; }
         await refresh();
+        return;
+      }
+      if (scope === 'staff-off' && action === 'del' && id) {
+        if (!state.staffOffsDbReady) { toast('休み設定は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        if (!confirm('この休みを削除しますか？')) return;
+        const { error } = await db.rpc('cleaning_remove_staff_off', { p_password: state.adminPw, p_id: id });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('削除しました'); await refresh();
+        return;
+      }
+
+      if (scope === 'task' && action === 'edit' && id) {
+        if (!state.tasksDbReady) { toast('掃除項目の編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        const task = state.tasks.find(t => t.id === id);
+        if (!task) return;
+        openModal('掃除項目編集', `
+          <form id="edit-task-form">
+            <div class="form-row"><label>項目名</label><input name="label" required value="${task.label.replace(/"/g, '&quot;')}"></div>
+            <div class="form-row"><label>絵文字</label><input name="emoji" value="${task.emoji}" maxlength="4"></div>
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>`);
+        document.getElementById('edit-task-form').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const fd = new FormData(ev.target);
+          const { error } = await db.rpc('cleaning_update_task', {
+            p_password: state.adminPw,
+            p_id: id,
+            p_label: fd.get('label'),
+            p_emoji: fd.get('emoji') || '🧹',
+          });
+          if (error) { toast(errMsg(error), 'error'); return; }
+          closeModal(); toast('保存しました'); await refresh();
+        };
+        return;
+      }
+      if (scope === 'task' && action === 'del' && id) {
+        if (!state.tasksDbReady) { toast('掃除項目の編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        if (!confirm('この掃除項目を削除しますか？')) return;
+        const { error } = await db.rpc('cleaning_delete_task', { p_password: state.adminPw, p_id: id });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('削除しました'); await refresh();
+        return;
+      }
+      if (scope === 'task' && (action === 'up' || action === 'down') && id) {
+        if (!state.tasksDbReady) { toast('掃除項目の編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        const sorted = getActiveTasks();
+        const idx = sorted.findIndex(t => t.id === id);
+        if (idx < 0) return;
+        const newIdx = action === 'up' ? idx - 1 : idx + 1;
+        if (newIdx < 0 || newIdx >= sorted.length) return;
+        [sorted[idx], sorted[newIdx]] = [sorted[newIdx], sorted[idx]];
+        const { error } = await db.rpc('cleaning_reorder_tasks', {
+          p_password: state.adminPw,
+          p_ids: sorted.map(t => t.id),
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        await refresh();
+        return;
       }
 
       if (e.target.id === 'btn-test-slack') {
         const { data, error } = await db.rpc('cleaning_test_slack', { p_password: state.adminPw });
         if (error) { toast(errMsg(error), 'error'); return; }
-        if (data?.skipped) { toast('本日は土日祝のため Slack 通知は送信しません'); return; }
-        if (!data?.ok) {
-          const err = data?.error || '送信失敗';
-          if (err === 'invalid_auth') {
-            toast('invalid_auth: Bot Token（xoxb-...）を再取得して保存してください', 'error');
-          } else if (err === 'missing_scope') {
-            const need = data?.needed || 'chat:write';
-            toast(`missing_scope: Bot Token Scopes に ${need}（UI では chat:write）を追加し、再インストール後に新トークンを保存してください`, 'error');
-          } else if (err === 'channel_not_found') {
-            toast('channel_not_found: チャンネルID（C.../G...）を確認。Bot Token と同じワークスペースか、Bot を /invite 済みか確認してください', 'error');
-          } else if (err === 'not_in_channel') {
-            toast('not_in_channel: 通知先チャンネルで /invite @App名 を実行してください', 'error');
-          } else {
-            toast(err, 'error');
-          }
-          return;
-        }
+        if (!data?.ok) { toast(data?.error || '送信失敗', 'error'); return; }
         toast('Slack にテスト送信しました');
       }
     });
@@ -714,8 +1119,7 @@
           p_password: state.adminPw,
           p_rotation_start_date: fd.get('rotation_start_date'),
           p_slack_enabled: null,
-          p_slack_bot_token: null,
-          p_slack_channel_id: null,
+          p_slack_webhook_url: null,
           p_cron_hour_jst: null,
           p_cron_enabled: null,
         });
@@ -729,8 +1133,7 @@
           p_password: state.adminPw,
           p_rotation_start_date: null,
           p_slack_enabled: fd.get('slack_enabled') === 'on',
-          p_slack_bot_token: fd.get('slack_bot_token') || null,
-          p_slack_channel_id: fd.get('slack_channel_id') || null,
+          p_slack_webhook_url: fd.get('slack_webhook_url') || null,
           p_cron_hour_jst: parseInt(fd.get('cron_hour_jst'), 10),
           p_cron_enabled: fd.get('cron_enabled') === 'on',
         });
@@ -750,6 +1153,20 @@
         toast('パスワードを変更しました');
         e.target.reset();
       }
+      if (e.target.id === 'staff-off-form') {
+        e.preventDefault();
+        if (!state.staffOffsDbReady) { toast('休み設定は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        const fd = new FormData(e.target);
+        const { error } = await db.rpc('cleaning_add_staff_off', {
+          p_password: state.adminPw,
+          p_staff_id: fd.get('staff_id'),
+          p_off_date: fd.get('off_date'),
+        });
+        if (error) { toast(errMsg(error), 'error'); return; }
+        toast('休みを登録しました');
+        e.target.reset();
+        await refresh();
+      }
     });
 
     document.getElementById('modal-overlay').addEventListener('click', (e) => {
@@ -757,6 +1174,7 @@
     });
 
     refresh();
+    if (!state.calendarMonth) state.calendarMonth = jstToday().slice(0, 7);
   </script>
 </body>
 
