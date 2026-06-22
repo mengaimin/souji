@@ -208,6 +208,7 @@
       adminPw: sessionStorage.getItem('cleaning_admin') || '',
       tasksDbReady: false,
       staffOffsDbReady: false,
+      staffSlackDbReady: false,
       calendarMonth: null,
     };
 
@@ -378,6 +379,20 @@
     function formatPrimarySkipText(skipReason) {
       return skipReasonLabel(skipReason) || '—';
     }
+    function formatSlackMention(staff) {
+      if (!staff) return '—';
+      const id = (staff.slack_user_id || '').trim();
+      if (id) return `<@${id}>`;
+      return staff.name || '—';
+    }
+    function formatTrashTodayText(sched) {
+      if (sched.primaryTodaySkipped) return formatPrimarySkipText(sched.primaryTodaySkipReason);
+      return formatSlackMention(sched.primaryToday);
+    }
+    function formatTrashTomorrowText(sched) {
+      if (sched.primaryTomorrowSkipped) return formatPrimarySkipText(sched.primaryTomorrowSkipReason);
+      return formatSlackMention(sched.primaryTomorrow);
+    }
     function assigneeIndex(dayOffset, taskIndex, staffCount) {
       if (staffCount <= 0) return -1;
       return ((dayOffset - taskIndex) % staffCount + staffCount) % staffCount;
@@ -443,14 +458,13 @@
     }
     function buildSlackMessage(sched) {
       const lines = sched.assignments.map(a => `${a.emoji} ${a.label}: ${formatAssigneeText(a)}`).join('\n');
-      const primaryLabel = sched.primaryTask?.label || '1番目の項目';
       const taskCount = sched.taskCount || sched.assignments.length;
-      const todayPrimary = sched.primaryTodaySkipped ? formatPrimarySkipText(sched.primaryTodaySkipReason) : (sched.primaryToday?.name || '—');
-      const tomorrowPrimary = sched.primaryTomorrowSkipped ? formatPrimarySkipText(sched.primaryTomorrowSkipReason) : (sched.primaryTomorrow?.name || '—');
+      const todayPrimary = formatTrashTodayText(sched);
+      const tomorrowPrimary = formatTrashTomorrowText(sched);
       return `【掃除当番】${sched.date.replace(/-/g, '/')}\n\n`
         + `■ 今日の${taskCount}つの掃除担当\n${lines}\n\n`
-        + `■ 今日の${primaryLabel}担当: ${todayPrimary}\n`
-        + `■ 明日の${primaryLabel}: ${tomorrowPrimary}\n\n`
+        + `🗑️ 今日のゴミ捨て: ${todayPrimary}\n`
+        + `🗑️ 明日のゴミ捨て: ${tomorrowPrimary}\n\n`
         + `よろしくお願いいたします。`;
     }
 
@@ -483,6 +497,8 @@
       if (settingsRes.error) throw settingsRes.error;
 
       state.staff = staffRes.data || [];
+      state.staffSlackDbReady = !staffRes.error
+        && (state.staff.length === 0 || Object.prototype.hasOwnProperty.call(state.staff[0], 'slack_user_id'));
       state.settings = settingsRes.data?.[0] || { rotation_start_date: jstToday() };
 
       if (holidaysRes.error) {
@@ -546,8 +562,8 @@
           <h2>📅 今日の当番（${fmtDateJaWithWeekday(today)}）</h2>
           <div class="task-grid">${rows}</div>
           <div class="highlight-box">
-            <strong>${primary?.emoji || '📌'} 今日の${primary?.label || '1番目'}:</strong> ${sched.primaryTodaySkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTodaySkipReason)}</span>` : (sched.primaryToday?.name || '—')}<br>
-            <strong>${primary?.emoji || '📌'} 明日の${primary?.label || '1番目'}:</strong> ${sched.primaryTomorrowSkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTomorrowSkipReason)}</span>` : (sched.primaryTomorrow?.name || '—')}
+            <strong>🗑️ 今日のゴミ捨て:</strong> ${sched.primaryTodaySkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTodaySkipReason)}</span>` : formatSlackMention(sched.primaryToday).replace(/</g, '&lt;')}<br>
+            <strong>🗑️ 明日のゴミ捨て:</strong> ${sched.primaryTomorrowSkipped ? `<span style="color:#94a3b8">${formatPrimarySkipText(sched.primaryTomorrowSkipReason)}</span>` : formatSlackMention(sched.primaryTomorrow).replace(/</g, '&lt;')}
           </div>
         </div>
         <div class="card">
@@ -627,8 +643,9 @@
       const items = sorted.map((s, i) => `
         <div class="staff-item" data-id="${s.id}">
           <div class="staff-order">${i + 1}</div>
-          <div class="staff-name">${s.name}</div>
+          <div class="staff-name">${s.name}${s.slack_user_id ? `<div style="font-size:10px;color:#64748b;font-weight:400">Slack: ${s.slack_user_id}</div>` : ''}</div>
           ${isAdmin() ? `
+            <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="edit" data-id="${s.id}">編集</button>
             <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
             <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="down" data-id="${s.id}" ${i === sorted.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="btn btn-danger btn-sm" data-scope="staff" data-action="del" data-id="${s.id}">削除</button>
@@ -649,6 +666,7 @@
             ${isAdmin() ? '<button class="btn btn-primary" id="btn-add-staff">＋ 社員追加</button>' : ''}
           </div>
           ${items || '<p class="empty">社員がいません</p>'}
+          ${isAdmin() && state.staffSlackDbReady ? '<p style="font-size:12px;color:#64748b;margin:12px 0 0">Slack ID（U〜）を登録すると、ゴミ捨て担当が @通知されます。</p>' : ''}
           ${!isAdmin() ? '<p style="font-size:12px;color:#94a3b8;margin-top:12px">編集するには管理者ログインが必要です</p>' : ''}
         </div>
         <div class="card">
@@ -786,6 +804,7 @@
           <p><strong>社員・順番</strong>タブで、当番に入るメンバーを管理します。</p>
           <ul>
             <li><strong>＋ 社員追加</strong> … 新しいメンバーを登録します</li>
+            <li><strong>編集</strong> … 名前と <strong>Slack ID</strong>（U〜）を設定します。Slack ID がある人はゴミ捨て担当で @通知されます</li>
             <li><strong>↑ ↓</strong> … 当番順（1番・2番・3番…）を入れ替えます。上にあるほど先に当番です</li>
             <li><strong>削除</strong> … 退職などで当番から外すときに使います</li>
           </ul>
@@ -926,6 +945,7 @@
         openModal('社員追加', `
           <form id="add-staff-form">
             <div class="form-row"><label>名前</label><input name="name" required placeholder="例: 田中太郎"></div>
+            ${state.staffSlackDbReady ? `<div class="form-row"><label>Slack ID（@通知用・任意）</label><input name="slack_user_id" placeholder="U0123456789"><p style="font-size:11px;color:#64748b;margin:4px 0 0">Slackのプロフィール → メンバーID（Uで始まる）</p></div>` : ''}
             <div style="display:flex;gap:8px;margin-top:14px">
               <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
               <button type="submit" class="btn btn-primary">追加</button>
@@ -933,8 +953,10 @@
           </form>`);
         document.getElementById('add-staff-form').onsubmit = async (ev) => {
           ev.preventDefault();
-          const name = new FormData(ev.target).get('name');
-          const { error } = await db.rpc('cleaning_add_staff', { p_password: state.adminPw, p_name: name });
+          const fd = new FormData(ev.target);
+          const params = { p_password: state.adminPw, p_name: fd.get('name') };
+          if (state.staffSlackDbReady) params.p_slack_user_id = fd.get('slack_user_id') || null;
+          const { error } = await db.rpc('cleaning_add_staff', params);
           if (error) { toast(errMsg(error), 'error'); return; }
           closeModal(); toast('追加しました'); await refresh();
         };
@@ -974,6 +996,33 @@
         const { error } = await db.rpc('cleaning_delete_staff', { p_password: state.adminPw, p_id: id });
         if (error) { toast(errMsg(error), 'error'); return; }
         toast('削除しました'); await refresh();
+        return;
+      }
+      if (scope === 'staff' && action === 'edit' && id) {
+        if (!state.staffSlackDbReady) { toast('社員編集は現在利用できません。管理者にお問い合わせください', 'error'); return; }
+        const staff = state.staff.find(s => s.id === id);
+        if (!staff) return;
+        openModal('社員編集', `
+          <form id="edit-staff-form">
+            <div class="form-row"><label>名前</label><input name="name" required value="${staff.name.replace(/"/g, '&quot;')}"></div>
+            <div class="form-row"><label>Slack ID（@通知用・任意）</label><input name="slack_user_id" value="${(staff.slack_user_id || '').replace(/"/g, '&quot;')}" placeholder="U0123456789"></div>
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button type="button" class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>`);
+        document.getElementById('edit-staff-form').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const fd = new FormData(ev.target);
+          const { error } = await db.rpc('cleaning_update_staff', {
+            p_password: state.adminPw,
+            p_id: id,
+            p_name: fd.get('name'),
+            p_slack_user_id: fd.get('slack_user_id') || null,
+          });
+          if (error) { toast(errMsg(error), 'error'); return; }
+          closeModal(); toast('保存しました'); await refresh();
+        };
         return;
       }
       if (scope === 'staff' && (action === 'up' || action === 'down') && id) {
