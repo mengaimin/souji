@@ -165,8 +165,37 @@ BEGIN
     v := substring(v from 2);
   END IF;
   v := trim(v);
-  IF v ~* '^U[A-Z0-9]+$' THEN RETURN v; END IF;
+  IF v ~* '^[UW][A-Z0-9]{8,}$' THEN RETURN v; END IF;
   RETURN NULL;
+END;
+$$;
+
+-- 送信直前: @表示名 を DB の Slack ID で <@U...> に差し替え（青いメンション）
+CREATE OR REPLACE FUNCTION cleaning_enrich_slack_mentions(p_message text)
+RETURNS text
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  r record;
+  v_id text;
+  v_msg text;
+BEGIN
+  v_msg := coalesce(p_message, '');
+  FOR r IN
+    SELECT s.name, s.mention_name, s.slack_user_id
+    FROM cleaning_staff s
+    WHERE s.slack_user_id IS NOT NULL AND trim(s.slack_user_id) <> ''
+  LOOP
+    v_id := cleaning_normalize_slack_user_id(r.slack_user_id);
+    IF v_id IS NULL THEN CONTINUE; END IF;
+    IF r.name IS NOT NULL AND r.name <> '' THEN
+      v_msg := replace(v_msg, '@' || r.name, '<@' || v_id || '>');
+    END IF;
+    IF r.mention_name IS NOT NULL AND r.mention_name <> '' AND r.mention_name <> r.name THEN
+      v_msg := replace(v_msg, '@' || r.mention_name, '<@' || v_id || '>');
+    END IF;
+  END LOOP;
+  RETURN v_msg;
 END;
 $$;
 
@@ -675,7 +704,9 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'skipped', true, 'reason', 'off_day');
   END IF;
 
-  v_msg := coalesce(nullif(trim(p_message), ''), cleaning_build_slack_message(p_date));
+  v_msg := cleaning_enrich_slack_mentions(
+    coalesce(nullif(trim(p_message), ''), cleaning_build_slack_message(p_date))
+  );
 
   SELECT * INTO v_resp FROM extensions.http((
     'POST', 'https://slack.com/api/chat.postMessage',
@@ -744,6 +775,7 @@ GRANT EXECUTE ON FUNCTION cleaning_schedule_for_date(date) TO anon, authenticate
 GRANT EXECUTE ON FUNCTION cleaning_build_slack_message(date) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_check_password(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_list_staff() TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION cleaning_enrich_slack_mentions(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_normalize_slack_user_id(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_slack_trash_mention(text, text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_add_staff(text, text, text, text) TO anon, authenticated;

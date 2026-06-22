@@ -1,5 +1,4 @@
--- Slack @ メンションを実際に通知する（Supabase SQL Editor で Run）
--- 1. Slack ID 正規化  2. プレビューと同じ文面をテスト送信可能に
+-- Slack @ を青いメンションにする（Supabase SQL Editor で Run）
 
 CREATE OR REPLACE FUNCTION cleaning_normalize_slack_user_id(p_slack_user_id text)
 RETURNS text
@@ -17,8 +16,36 @@ BEGIN
     v := substring(v from 2);
   END IF;
   v := trim(v);
-  IF v ~* '^U[A-Z0-9]+$' THEN RETURN v; END IF;
+  IF v ~* '^[UW][A-Z0-9]{8,}$' THEN RETURN v; END IF;
   RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION cleaning_enrich_slack_mentions(p_message text)
+RETURNS text
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  r record;
+  v_id text;
+  v_msg text;
+BEGIN
+  v_msg := coalesce(p_message, '');
+  FOR r IN
+    SELECT s.name, s.mention_name, s.slack_user_id
+    FROM cleaning_staff s
+    WHERE s.slack_user_id IS NOT NULL AND trim(s.slack_user_id) <> ''
+  LOOP
+    v_id := cleaning_normalize_slack_user_id(r.slack_user_id);
+    IF v_id IS NULL THEN CONTINUE; END IF;
+    IF r.name IS NOT NULL AND r.name <> '' THEN
+      v_msg := replace(v_msg, '@' || r.name, '<@' || v_id || '>');
+    END IF;
+    IF r.mention_name IS NOT NULL AND r.mention_name <> '' AND r.mention_name <> r.name THEN
+      v_msg := replace(v_msg, '@' || r.mention_name, '<@' || v_id || '>');
+    END IF;
+  END LOOP;
+  RETURN v_msg;
 END;
 $$;
 
@@ -31,11 +58,6 @@ LANGUAGE sql IMMUTABLE AS $$
     ELSE '@' || coalesce(nullif(trim(p_name), ''), '—')
   END;
 $$;
-
--- 既存データの Slack ID を正規化（@U... や <@U...> で登録されていた場合）
-UPDATE cleaning_staff
-SET slack_user_id = cleaning_normalize_slack_user_id(slack_user_id)
-WHERE slack_user_id IS NOT NULL;
 
 DROP FUNCTION IF EXISTS cleaning_send_slack(date);
 CREATE OR REPLACE FUNCTION cleaning_send_slack(
@@ -75,7 +97,9 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'skipped', true, 'reason', 'off_day');
   END IF;
 
-  v_msg := coalesce(nullif(trim(p_message), ''), cleaning_build_slack_message(p_date));
+  v_msg := cleaning_enrich_slack_mentions(
+    coalesce(nullif(trim(p_message), ''), cleaning_build_slack_message(p_date))
+  );
 
   SELECT * INTO v_resp FROM extensions.http((
     'POST', 'https://slack.com/api/chat.postMessage',
@@ -124,4 +148,11 @@ BEGIN
 END;
 $$;
 
+GRANT EXECUTE ON FUNCTION cleaning_enrich_slack_mentions(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION cleaning_normalize_slack_user_id(text) TO anon, authenticated;
+
+-- 登録済み Slack ID の確認（U/W で始まるか）
+SELECT name, slack_user_id,
+  cleaning_normalize_slack_user_id(slack_user_id) AS normalized_id
+FROM cleaning_staff
+ORDER BY sort_order;

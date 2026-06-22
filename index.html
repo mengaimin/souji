@@ -388,13 +388,21 @@
       if (m) id = m[1];
       if (id.startsWith('@')) id = id.slice(1);
       id = id.trim();
-      return /^U[A-Z0-9]+$/i.test(id) ? id : '';
+      return /^[UW][A-Z0-9]{8,}$/i.test(id) ? id : '';
+    }
+    function staffForMention(staff) {
+      if (!staff?.id) return staff;
+      return state.staff.find(s => s.id === staff.id) || staff;
     }
     function formatSlackMention(staff) {
+      staff = staffForMention(staff);
       if (!staff) return '—';
       const id = normalizeSlackUserId(staff.slack_user_id);
       if (id) return `<@${id}>`;
       return `@${staff.name || '—'}`;
+    }
+    function slackMentionReady(staff) {
+      return !!normalizeSlackUserId(staffForMention(staff)?.slack_user_id);
     }
     function formatTrashTodayText(sched) {
       if (sched.primaryTodaySkipped) return formatPrimarySkipText(sched.primaryTodaySkipReason);
@@ -654,7 +662,12 @@
       const items = sorted.map((s, i) => `
         <div class="staff-item" data-id="${s.id}">
           <div class="staff-order">${i + 1}</div>
-          <div class="staff-name">${s.name}${s.slack_user_id ? `<div style="font-size:10px;color:#64748b;font-weight:400">Slack: ${s.slack_user_id}</div>` : ''}</div>
+          <div class="staff-name">${s.name}${(() => {
+            const sid = normalizeSlackUserId(s.slack_user_id);
+            if (sid) return `<div style="font-size:10px;color:#0f766e;font-weight:400">Slack: ${sid} ✓</div>`;
+            if (s.slack_user_id) return `<div style="font-size:10px;color:#dc2626;font-weight:400">Slack ID不正（U〜で再登録）</div>`;
+            return `<div style="font-size:10px;color:#dc2626;font-weight:400">Slack ID未設定（@通知不可）</div>`;
+          })()}</div>
           ${isAdmin() ? `
             <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="edit" data-id="${s.id}">編集</button>
             <button class="btn btn-secondary btn-sm" data-scope="staff" data-action="up" data-id="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -1121,7 +1134,15 @@
         });
         if (error) { toast(errMsg(error), 'error'); return; }
         if (!data?.ok) { toast(data?.error || '送信失敗', 'error'); return; }
-        toast('Slack にテスト送信しました');
+        const sent = data?.message || msg;
+        const hasRealMention = sent.includes('<@');
+        const missingIds = [sched.primaryToday, sched.primaryTomorrow]
+          .filter(s => s && !slackMentionReady(s));
+        if (!hasRealMention && missingIds.length) {
+          toast(`送信しましたが、${missingIds.map(s => s.name).join('・')} の Slack ID（U〜）未設定のため @ は通知されません`, 'error');
+        } else {
+          toast('Slack にテスト送信しました');
+        }
       }
     });
 
